@@ -1,0 +1,29 @@
+name: Check
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    env:
+      TMPDIR: ${{ github.workspace }}/runtime/tmp
+      XDG_CACHE_HOME: ${{ github.workspace }}/runtime/cache
+      XDG_CONFIG_HOME: ${{ github.workspace }}/runtime/config
+      npm_config_cache: ${{ github.workspace }}/runtime/npm
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/runtime/browsers
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p runtime/tmp runtime/cache runtime/config runtime/npm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: sudo apt-get update && sudo apt-get install -y tmux ffmpeg build-essential
+      - run: npm ci
+      - run: node node_modules/playwright-core/cli.js install --with-deps chromium
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run smoke

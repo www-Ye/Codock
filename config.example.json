@@ -1,0 +1,22 @@
+{
+  "origin": "https://terminal.example.com",
+  "previewSuffix": "preview.example.com",
+  "socket": "/srv/codock/tmux/default.sock",
+  "projectRoot": "/srv/codock/projects",
+  "allowed": ["dev", "research", "build"],
+  "port": 8790,
+  "authMode": "github",
+  "githubOwner": { "login": "REPLACE-ME", "id": 0 },
+  "codexHome": "/srv/codock/.codex",
+  "chatEnabled": true,
+  "previewPorts": [],
+  "brand": {
+    "name": "Codock",
+    "tagline": "Your Codex, anywhere.",
+    "preset": "graphite",
+    "mascot": true,
+    "character": "nailong",
+    "accent": null,
+    "legalText": ""
+  }
+}

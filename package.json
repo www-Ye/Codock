@@ -1,0 +1,35 @@
+{
+  "name": "codock",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/run.mjs start",
+    "setup": "node scripts/run.mjs setup",
+    "setup:github": "node scripts/run.mjs setup-github",
+    "test": "node scripts/run.mjs test",
+    "check": "node scripts/run.mjs check",
+    "smoke": "node scripts/run.mjs smoke",
+    "screenshots": "node scripts/run.mjs screenshots",
+    "lint": "node scripts/run.mjs lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@xterm/xterm": "6.0.0",
+    "node-pty": "1.1.0",
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "playwright-core": "1.58.2",
+    "prettier": "3.9.8"
+  },
+  "description": "Your Codex, anywhere. A mobile-first companion for existing sessions, with chat, terminal controls, and live previews.",
+  "license": "MIT",
+  "allowScripts": {
+    "node-pty@1.1.0": true
+  }
+}

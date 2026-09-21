@@ -1,0 +1,428 @@
+<!doctype html>
+<html
+  lang="zh-CN"
+  data-theme="{{BRAND_PRESET}}"
+  data-mascot="{{BRAND_MASCOT}}"
+  data-character="{{BRAND_CHARACTER}}"
+>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#191f1c" />
+    <title>{{BRAND_NAME}}</title>
+    <link rel="stylesheet" href="/vendor/xterm.css" />
+    <link rel="stylesheet" href="/style.css?v=compact1" />
+    <link rel="stylesheet" href="/brand.css" />
+    <script src="/theme.js" defer></script>
+    <script src="/preview-view.js?v=media1" defer></script>
+    <script src="/chat-markdown.js?v=receipt1" defer></script>
+    <script src="/chat-view.js?v=receipt1" defer></script>
+    <script src="/session-list.js?v=receipt1" defer></script>
+    <script src="/app.js?v=compact1" defer></script>
+  </head>
+  <body>
+    <section id="login" class="login">
+      <div class="login-card">
+        <div class="workbench large" aria-hidden="true">
+          <img src="/workbench.svg" alt="" />
+        </div>
+        <p class="eyebrow">PICK UP. SHIP ON.</p>
+        <h1>{{BRAND_NAME}}</h1>
+        <p class="muted">{{BRAND_TAGLINE}}</p>
+        <button type="button" class="primary" id="githubLogin" disabled>
+          使用 GitHub 登录 <span>↗</span>
+        </button>
+        <p id="githubNote" class="micro">仅限已绑定的 GitHub 账号</p>
+        <form id="loginForm" class="hidden">
+          <label
+            >独立访问密码<input
+              id="password"
+              type="password"
+              autocomplete="current-password"
+              required
+              minlength="16" /></label
+          ><label
+            >验证器动态码<input
+              id="code"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              pattern="[0-9]{6}"
+              maxlength="6"
+              placeholder="6 位数字"
+              required /></label
+          ><button class="primary" id="loginButton" disabled>进入工作台 <span>→</span></button>
+        </form>
+        <p id="loginMessage" role="status" class="feedback">正在连接工作台…</p>
+        <button id="retryConnection" class="quiet hidden" type="button">重新连接</button
+        ><noscript>请启用浏览器 JavaScript 后重新打开。</noscript>
+        <p class="micro">仅供授权人员使用 · 操作沿用服务器用户权限</p>
+      </div>
+    </section>
+    <div id="app" class="hidden">
+      <header class="header">
+        <button
+          id="sessionToggle"
+          class="quiet"
+          aria-label="展开或收起会话列表"
+          aria-controls="sessionSidebar"
+          aria-expanded="false"
+        >
+          ☰</button
+        ><a href="/" class="brand"
+          ><span class="workbench"><img src="/workbench.svg" alt="" /></span
+          ><span>{{BRAND_NAME}}<small>对话 · 执行 · 成果</small></span></a
+        >
+        <div class="workspace-toolbar">
+          <div class="workspace-head">
+            <h1 id="title"></h1>
+            <p id="sessionInfo" class="micro"></p>
+          </div>
+          <nav class="tabs" aria-label="工作页">
+            <button data-tab="chat" class="selected">聊天</button
+            ><button data-tab="preview">预览</button><button data-tab="terminal">终端</button
+            ><button data-tab="settings">设置</button>
+          </nav>
+        </div>
+        <details id="deskMenu" class="header-actions">
+          <summary aria-label="工作台菜单">⋯</summary>
+          <div class="desk-menu-items">
+            <a href="/">全部会话</a
+            ><button id="refresh" class="quiet" aria-label="刷新会话">刷新会话</button
+            ><button id="logout" class="quiet">退出登录</button>
+          </div>
+        </details>
+      </header>
+      <button
+        id="sessionBackdrop"
+        class="session-backdrop hidden"
+        aria-label="关闭会话列表"
+        tabindex="-1"
+      ></button>
+      <aside id="sessionSidebar" class="session-sidebar" aria-label="所有会话">
+        <div class="sidebar-heading">
+          <div>
+            <h2>Codex 会话</h2>
+            <p id="sessionCount" class="micro"></p>
+          </div>
+          <button
+            id="sessionSearchToggle"
+            class="quiet search-toggle"
+            aria-label="搜索会话"
+            aria-controls="sessionSearch"
+            aria-expanded="false"
+          >
+            ⌕</button
+          ><button id="sessionClose" class="quiet" aria-label="收起会话列表">‹</button>
+        </div>
+        <input
+          id="sessionSearch"
+          class="hidden"
+          type="search"
+          placeholder="搜索名称或备注…"
+          aria-label="搜索侧栏会话"
+        />
+        <nav id="sessionList" aria-label="选择会话"></nav>
+        <div class="sidebar-foot">
+          <span class="workbench"><img src="/workbench.svg" alt="" /></span>
+          <p>连接原来的工作现场。<small>关闭网页不会结束原会话</small></p>
+        </div>
+      </aside>
+      <div id="deskContent">
+        <main id="home">
+          <div class="intro">
+            <div>
+              <p class="eyebrow">PICK UP WHERE YOU LEFT OFF</p>
+              <h1>继续 Codex 工作</h1>
+              <p class="muted">同一段 Codex 对话，换个设备继续。</p>
+            </div>
+            <div class="home-search">
+              <button id="searchToggle" class="quiet" aria-controls="search" aria-expanded="false">
+                ⌕ 搜索</button
+              ><input
+                id="search"
+                class="hidden"
+                type="search"
+                placeholder="搜索会话或备注…"
+                aria-label="搜索会话"
+              />
+            </div>
+          </div>
+          <div id="cards" class="cards"></div>
+          <p class="micro home-note">关闭网页不会结束会话 · 默认只读，按需允许输入</p>
+        </main>
+        <main id="workspace" class="workspace hidden">
+          <button id="rebind" class="hidden">确认重新绑定</button>
+          <section id="chatPanel" class="tab-panel hidden" aria-label="Codex 聊天记录">
+            <div class="chat-top">
+              <div>
+                <button
+                  id="chatRunStatus"
+                  class="chat-badge"
+                  data-state="unknown"
+                  type="button"
+                  aria-label="状态待确认"
+                >
+                  <i class="run-dot" aria-hidden="true"></i
+                  ><span id="chatRunLabel" role="status" aria-live="polite"
+                    >状态待确认</span
+                  ></button
+                ><span id="chatMeta">原 Codex 对话与执行记录</span>
+              </div>
+              <div>
+                <button id="chatActivityToggle" class="quiet" aria-pressed="false">仅看对话</button
+                ><button id="chatRefresh" class="quiet">刷新</button>
+              </div>
+            </div>
+            <button id="chatAttention" class="chat-attention hidden" type="button">
+              有问题等你回答 · 查看现场 →
+            </button>
+            <div id="chatScroll" tabindex="0" aria-label="上下滑动阅读聊天记录">
+              <button id="chatOlder" class="quiet hidden">查看更早的消息 ↑</button>
+              <p id="chatStatus" role="status">正在读取对话…</p>
+              <div id="chatMessages"></div>
+            </div>
+            <div class="chat-bottom">
+              <form id="chatForm">
+                <textarea
+                  id="chatDraft"
+                  rows="1"
+                  maxlength="4000"
+                  placeholder="继续这段对话…"
+                  aria-label="发送给原 Codex 的消息"
+                  disabled
+                ></textarea
+                ><button
+                  id="chatVoice"
+                  class="quiet"
+                  type="button"
+                  aria-label="语音输入"
+                  aria-expanded="false"
+                  aria-controls="voicePanel"
+                  title="语音输入"
+                  disabled
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.7"
+                    aria-hidden="true"
+                  >
+                    <rect x="9" y="3" width="6" height="12" rx="3" />
+                    <path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3M8 22h8" />
+                  </svg></button
+                ><button id="chatSend" class="primary" disabled>发送 ↑</button>
+              </form>
+              <div id="voicePanel" class="voice-panel hidden">
+                <p id="voiceStatus" role="status"></p>
+                <div class="voice-actions">
+                  <select id="voiceLang" aria-label="听写语言">
+                    <option value="zh-CN">中文</option>
+                    <option value="en-US">English</option></select
+                  ><button id="voiceStart" type="button">开始听写</button
+                  ><button id="voiceClose" class="quiet" type="button" aria-label="关闭语音输入">
+                    关闭
+                  </button>
+                </div>
+              </div>
+              <p id="chatSendStatus" role="status">正在连接原会话…</p>
+              <div>
+                <button id="chatLatest" class="quiet">↓ 最新</button
+                ><button id="chatPreview" class="quiet">查看网页 ↗</button
+                ><button id="chatReceipt" class="quiet hidden">检查回执</button
+                ><button
+                  id="chatTerminal"
+                  class="quiet"
+                  aria-controls="chatControls"
+                  aria-expanded="false"
+                >
+                  现场 / 按键</button
+                ><button id="chatInterrupt" class="quiet danger">中断…</button>
+              </div>
+            </div>
+          </section>
+          <dialog
+            id="chatControls"
+            aria-labelledby="chatControlsTitle"
+            aria-describedby="chatControlHint"
+          >
+            <div class="chat-controls-head">
+              <h2 id="chatControlsTitle">现场操作</h2>
+              <button id="chatStopTurn" class="danger" disabled>中断本轮 · Esc</button
+              ><button id="chatControlsClose" autofocus>回到聊天</button>
+            </div>
+            <p id="chatControlHint" class="micro"></p>
+            <div id="chatControlHost"></div>
+          </dialog>
+          <section id="terminalPanel" class="tab-panel hidden">
+            <div class="terminal-top">
+              <div>
+                <span id="connectionDot" class="dot"></span><span id="connection">正在连接…</span>
+              </div>
+              <button id="writeMode" disabled>允许输入</button
+              ><button id="reconnect" class="quiet" aria-label="重新连接终端">重连</button>
+            </div>
+            <div class="terminal-view">
+              <div class="terminal-scroll" id="terminalScroll">
+                <div id="terminal"></div>
+              </div>
+              <section
+                id="historyDialog"
+                class="history-inline hidden"
+                aria-labelledby="historyTitle"
+              >
+                <div class="history-head">
+                  <h2 id="historyTitle">历史记录</h2>
+                  <button id="historyClose">回到实时 ↓</button>
+                </div>
+                <div class="history-tools">
+                  <button id="historyOlder" disabled>加载更早</button
+                  ><button id="historyRefresh">刷新</button
+                  ><button id="historyWrap" aria-pressed="false">原始行宽</button
+                  ><span id="historyStatus" role="status"></span>
+                </div>
+                <div id="historyText" tabindex="0" aria-label="只读终端历史"></div>
+                <p class="micro">上下滑动阅读 · 点「回到实时」继续输入</p>
+              </section>
+              <button id="latest" class="latest" aria-label="回到终端最新位置">↓ 最新</button>
+            </div>
+            <div class="terminal-dock">
+              <div class="dock-tools">
+                <div class="display-tools">
+                  <button id="focusTerminal" disabled aria-label="打开终端键盘">键盘</button
+                  ><button id="fontSmaller" aria-label="缩小终端字号">A−</button
+                  ><button id="fontLarger" aria-label="放大终端字号">A＋</button
+                  ><button id="copySelection">复制选中</button
+                  ><button id="showHistory" disabled>历史</button>
+                </div>
+                <button
+                  id="interrupt"
+                  data-key="ctrl-c"
+                  class="danger"
+                  title="发送 Ctrl+C，可能中断任务或退出程序"
+                >
+                  Ctrl+C
+                </button>
+                <details id="moreKeys">
+                  <summary>更多键</summary>
+                  <div class="extra-keys">
+                    <button data-key="shift-tab">Shift Tab</button
+                    ><button data-key="home">Home</button><button data-key="end">End</button
+                    ><button data-key="delete">Delete</button
+                    ><button data-key="page-up">Page Up</button
+                    ><button data-key="page-down">Page Down</button
+                    ><button data-key="ctrl-a">Ctrl A</button
+                    ><button data-key="ctrl-e">Ctrl E</button
+                    ><button data-key="ctrl-l">Ctrl L</button
+                    ><button data-key="ctrl-b">Ctrl B</button>
+                  </div>
+                </details>
+              </div>
+              <div class="keyboard" aria-label="终端快捷键">
+                <div class="key-column">
+                  <button
+                    data-key="shift-left"
+                    class="key-shift-left"
+                    aria-label="Shift 加左方向键"
+                  >
+                    Shift＋←</button
+                  ><button data-key="escape">Esc</button><button data-key="tab">Tab</button>
+                </div>
+                <div class="direction-pad" aria-label="方向键">
+                  <button data-key="up" class="key-up" aria-label="上方向键">↑</button
+                  ><button data-key="left" class="key-left" aria-label="左方向键">←</button
+                  ><button data-key="down" class="key-down" aria-label="下方向键">↓</button
+                  ><button data-key="right" class="key-right" aria-label="右方向键">→</button>
+                </div>
+                <div class="key-column">
+                  <button data-key="enter" class="key-enter">Enter ↵</button
+                  ><button data-key="backspace" aria-label="退格键">退格 ⌫</button>
+                </div>
+              </div>
+              <p id="terminalNote" class="micro" role="status">
+                点「键盘」直接输入 · Shift＋← 和方向键可直接点按
+              </p>
+            </div>
+          </section>
+          <section id="previewPanel" class="tab-panel hidden">
+            <div class="preview-top">
+              <span id="previewInfo">项目预览</span>
+              <div>
+                <button id="reloadPreview">刷新预览</button
+                ><button id="openPreview">新窗口打开 ↗</button>
+              </div>
+            </div>
+            <p
+              id="previewStatus"
+              class="preview-status hidden"
+              role="status"
+              aria-live="polite"
+            ></p>
+            <div id="previewEmpty" class="empty">
+              <span>▧</span>
+              <h2>给这个会话留一扇窗</h2>
+              <p>绑定 HTML 文件夹或本地网页端口，<br />以后手机也能直接打开。</p>
+              <button id="configurePreview" class="primary">绑定预览</button>
+            </div>
+            <iframe
+              id="previewFrame"
+              title="项目网页预览"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"
+              referrerpolicy="no-referrer"
+              class="hidden"
+            ></iframe>
+          </section>
+          <section id="settingsPanel" class="tab-panel hidden">
+            <form id="settingsForm" class="settings">
+              <h2>这个会话的工作页</h2>
+              <p class="muted">只修改网页上的备注和预览绑定，不改名、不重启 tmux。</p>
+              <label>显示名称<input id="label" maxlength="50" required /></label
+              ><label
+                >预览方式<select id="previewType">
+                  <option value="none">暂不绑定</option>
+                  <option value="static">HTML 文件夹</option>
+                  <option value="port">已经启动的本地网页</option>
+                </select></label
+              >
+              <div id="staticFields" class="hidden">
+                <label
+                  >代码目录下的相对文件夹<input
+                    id="directory"
+                    placeholder="例如 play/my-project/site" /></label
+                ><label>HTML 入口<input id="entry" placeholder="index.html" /></label>
+              </div>
+              <div id="portFields" class="hidden">
+                <label
+                  >服务器本地端口<input
+                    id="port"
+                    type="number"
+                    min="1024"
+                    max="65535"
+                    placeholder="例如 8895"
+                /></label>
+                <p class="micro">
+                  对应服务器的 127.0.0.1。不会自动启动程序；写死的 localhost
+                  接口地址仍需改成相对地址。
+                </p>
+              </div>
+              <button class="primary">保存设置</button>
+              <p id="settingsMessage" role="status"></p>
+            </form>
+          </section>
+        </main>
+        <footer>
+          {{BRAND_NAME}} · 远程工作空间
+          <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer"
+            >{{LEGAL_TEXT}}</a
+          >
+        </footer>
+      </div>
+    </div>
+    <div id="toast" role="status" class="toast hidden"></div>
+  </body>
+</html>

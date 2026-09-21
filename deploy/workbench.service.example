@@ -1,0 +1,27 @@
+[Unit]
+Description=Codock (one Linux user / one instance)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=codock
+Group=codock
+WorkingDirectory=/srv/codock/app
+Environment=DESK_CONFIG=/srv/codock/app/config.json
+Environment=TMPDIR=/srv/codock/app/runtime/tmp
+Environment=XDG_CACHE_HOME=/srv/codock/app/runtime/cache
+Environment=XDG_CONFIG_HOME=/srv/codock/app/runtime/config
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/node scripts/run.mjs start
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+LimitNOFILE=8192
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

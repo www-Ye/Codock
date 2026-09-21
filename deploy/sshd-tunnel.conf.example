@@ -1,0 +1,16 @@
+# Gateway only. Validate with sshd -t AND sshd -T -C user=workbench-tunnel,host=localhost,addr=CLIENT_IP.
+# Verify existing global AllowUsers/DenyUsers/Match rules. Keep an existing admin SSH session open.
+Match User workbench-tunnel
+    AuthenticationMethods publickey
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    AllowTcpForwarding remote
+    PermitListen 127.0.0.1:18790
+    PermitOpen none
+    GatewayPorts no
+    AllowStreamLocalForwarding no
+    AllowAgentForwarding no
+    X11Forwarding no
+    PermitTTY no
+    MaxSessions 0
+Match all

@@ -1,0 +1,17 @@
+[Unit]
+Description=Restricted reverse SSH tunnel for Codock
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=codock
+Group=codock
+ExecStart=/usr/bin/ssh -NT -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/srv/codock/ssh/known_hosts -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -i /srv/codock/ssh/tunnel_ed25519 -R 127.0.0.1:18790:127.0.0.1:8790 workbench-tunnel@GATEWAY_HOST
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

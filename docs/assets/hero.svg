@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="350" viewBox="0 0 1200 350" role="img" aria-labelledby="title desc">
+<title id="title">Codock</title><desc id="desc">Your Codex, anywhere. Same session. Smaller screen.</desc>
+<defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#171a28"/><stop offset="1" stop-color="#2c2544"/></linearGradient><linearGradient id="accent"><stop stop-color="#a9c8e7"/><stop offset="1" stop-color="#ceaff4"/></linearGradient></defs>
+<rect width="1200" height="350" rx="28" fill="url(#bg)"/>
+<g fill="none" stroke="#b4acd8" opacity=".1"><circle cx="981" cy="175" r="200"/><circle cx="981" cy="175" r="145"/><circle cx="981" cy="175" r="90"/></g>
+<text x="70" y="76" font-family="ui-monospace,monospace" font-size="14" letter-spacing="4" fill="#acb7d4">PICK UP. SHIP ON.</text>
+<text x="65" y="180" font-family="system-ui,sans-serif" font-weight="750" font-size="94" letter-spacing="-5" fill="#f3edf9">Codock<tspan fill="#c8b1ee">.</tspan></text>
+<text x="70" y="232" font-family="system-ui,sans-serif" font-size="30" fill="#c5c6dd">Your Codex, anywhere.</text>
+<text x="70" y="288" font-family="ui-monospace,monospace" font-size="14" fill="#929bb6">SAME SESSION. SMALLER SCREEN.</text>
+<g transform="translate(788 62)"><rect x="0" y="26" width="250" height="164" rx="16" fill="#222537" stroke="#62607d" stroke-width="2"/><path d="M0 56h250" stroke="#62607d"/><g fill="#958aac"><circle cx="18" cy="41" r="3"/><circle cx="31" cy="41" r="3"/><circle cx="44" cy="41" r="3"/></g><path d="m28 86 18 14-18 14m34 0h30" fill="none" stroke="url(#accent)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M26 142h139m-139 17h94" stroke="#585971" stroke-width="6" stroke-linecap="round"/><rect x="165" y="90" width="105" height="162" rx="19" fill="#171a28" stroke="#bba8db" stroke-width="3"/><rect x="200" y="101" width="35" height="5" rx="2.5" fill="#5a536e"/><rect x="179" y="127" width="76" height="35" rx="10" fill="#3c334f"/><path d="M188 141h43m-43 10h28m-6 35h48m-48 13h39" stroke="#ad9bc7" stroke-width="4" stroke-linecap="round"/><rect x="179" y="219" width="76" height="17" rx="8" fill="#333044"/><circle cx="241" cy="227" r="5" fill="#c3b0eb"/></g>
+</svg>
