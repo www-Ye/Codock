@@ -737,6 +737,7 @@ test(
     assert.equal(await page.inputValue("#chatDraft"), "手动改字");
     assert.equal(sends, 2);
     // Session selection is navigation, not a tmux mutation; draft stays in its chat.
+    const visibleOrder = await page.evaluate(() => sessionView.items.map((s) => s.name));
     await page.fill("#chatDraft", "保留这个会话的草稿");
     await page.click('#sessionList a[href="/s/notes#chat"]');
     await page.waitForFunction(
@@ -754,10 +755,12 @@ test(
         sessions.find((s) => s.name === "notes").lastOpenedAt,
     );
     await page.click('[aria-label="取消置顶 工作台"]');
-    assert.equal(
-      await page.locator("#sessionList a").first().getAttribute("href"),
-      "/s/notes#chat",
-      "recording a visit does not move the clicked row immediately",
+    assert.deepEqual(
+      await page
+        .locator("#sessionList a")
+        .evaluateAll((links) => links.map((a) => a.getAttribute("href"))),
+      visibleOrder.map((name) => "/s/" + name + "#chat"),
+      "navigation and visit receipts preserve the displayed order until refresh",
     );
     await page.click("#deskMenu summary");
     await page.click("#refresh");

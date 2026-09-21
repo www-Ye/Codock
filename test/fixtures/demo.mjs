@@ -1,4 +1,5 @@
 import { mkdtemp } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { createDesk } from "../../server.mjs";
 
 // Synthetic content only. Never reads an existing socket, config, history or credential.
@@ -47,6 +48,8 @@ export async function createDemo() {
     socket: directory + "/absent.sock",
     allowed: ["demo", "design", "research"],
     secure: false,
+    projectRoot: fileURLToPath(new URL("../../examples", import.meta.url)),
+    previewSuffix: "preview.terminal.localhost",
     chatDependencies: {
       read: async () => ({ available: true, binding, revision: "5", messages, before: null }),
     },
@@ -58,7 +61,10 @@ export async function createDemo() {
       name,
       label: labels[i],
       identity: name + "-fixture",
-      preview: null,
+      preview:
+        name === "demo"
+          ? { type: "static", directory: "workbench-page", entry: "index.html" }
+          : null,
       revision: 1,
     };
   });
@@ -72,8 +78,9 @@ export async function createDemo() {
     }));
   desk.registry.command = async (args) => (args[0] === "capture-pane" ? footer : "%1\t123\t30\t0");
   await new Promise((r) => desk.server.listen(0, "127.0.0.1", r));
-  const origin = "http://127.0.0.1:" + desk.server.address().port;
+  const origin = "http://terminal.localhost:" + desk.server.address().port;
   desk.config.origin = origin;
+  desk.config.previewPort = String(desk.server.address().port);
   return {
     desk,
     directory,

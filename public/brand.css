@@ -131,8 +131,8 @@ footer a:empty {
   place-items: center;
 }
 .workbench.large {
-  width: 118px;
-  height: 118px;
+  width: calc(var(--pet-size) * 2.95);
+  height: calc(var(--pet-size) * 2.95);
   margin-bottom: 2px;
 }
 .dock-mark {
@@ -144,9 +144,9 @@ footer a:empty {
 }
 .chat-top button.status-pet {
   position: relative;
-  width: 24px;
-  height: 24px;
-  min-height: 24px;
+  width: var(--pet-size);
+  height: var(--pet-size);
+  min-height: var(--pet-size);
   flex-shrink: 0;
   padding: 0;
   border: 0;
@@ -158,6 +158,37 @@ footer a:empty {
   content: "";
   position: absolute;
   inset: -4px;
+}
+:root {
+  --pet-size: 40px;
+}
+[data-pet-size="small"] {
+  --pet-size: 32px;
+}
+[data-pet-size="large"] {
+  --pet-size: 56px;
+}
+.sidebar-foot .workbench {
+  width: var(--pet-size);
+  height: var(--pet-size);
+}
+.pet-sizes {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.pet-sizes[hidden] {
+  display: none;
+}
+.pet-sizes button {
+  min-width: 60px;
+  min-height: 44px;
+}
+.pet-sizes button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--ink);
+  border-color: var(--accent);
 }
 .pet-bubble {
   position: fixed;

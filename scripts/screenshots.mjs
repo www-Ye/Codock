@@ -7,33 +7,35 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createDemo } from "../test/fixtures/demo.mjs";
 
-// Crop the actual login UI; no mockup markup or enlarged replacement mascot.
+// Actual signed-in chat: idle movement and clicks, not a login-only animation.
 async function captureCompanions(browser, demo, output) {
-  const context = await browser.browser().newContext({
-    viewport: { width: 390, height: 640 },
-    reducedMotion: "no-preference",
-  });
   const frames = demo.directory + "/companion-frames";
   await mkdir(frames);
-  const page = await context.newPage();
+  const page = await browser.newPage();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   let frame = 0;
   try {
-    await page.goto(demo.origin);
+    await page.goto(demo.origin + "/s/demo#chat");
     for (const character of ["nailong", "duck", "cat", "robot"]) {
       await page.evaluate((value) => {
         localStorage.setItem("codock.character", value);
         localStorage.setItem("codock.theme", "midnight");
+        localStorage.setItem("codock.petSize", "large");
       }, character);
       await page.reload();
-      const pet = page.locator(".login .pet-play");
+      await page.waitForSelector(".chat-message");
+      await page.locator("#chatScroll").evaluate((node) => {
+        node.scrollTop = 0;
+      });
+      const pet = page.locator(".status-pet");
       await pet.waitFor({ state: "visible" });
       await pet.locator("img").evaluate((img) => img.decode());
       assert.notEqual(
         await pet.locator("img").evaluate((img) => getComputedStyle(img).animationName),
         "none",
       );
-      const rect = await pet.boundingBox();
-      const clip = { x: 0, y: Math.max(0, Math.floor(rect.y) - 78), width: 390, height: 320 };
+      const clip = { x: 0, y: 0, width: 390, height: 360 };
       const started = Date.now();
       for (let i = 0; i < 28; i++) {
         if (i === 8) {
@@ -50,7 +52,7 @@ async function captureCompanions(browser, demo, output) {
       }
     }
   } finally {
-    await context.close();
+    await page.close();
   }
   const exec = promisify(execFile);
   await exec(
@@ -94,6 +96,72 @@ async function captureCompanions(browser, demo, output) {
   );
 }
 
+async function exercisePreview(page, demo, output, publish) {
+  await page.setViewportSize({ width: 1360, height: 900 });
+  await page.click('[data-tab="settings"]');
+  await page.click('[data-preset="midnight"]');
+  await page.click('[data-tab="chat"]');
+  await page.waitForSelector(".chat-message");
+  const frames = demo.directory + "/preview-frames";
+  await mkdir(frames);
+  let n = 0;
+  const shot = () => page.screenshot({ path: frames + `/frame-${n++}.png` });
+  await shot();
+  await page.click('[data-tab="preview"]');
+  await page.waitForFunction(() => previewView.state === "ready");
+  const frame = page.frameLocator("#previewFrame");
+  assert.notEqual(
+    new URL(page.frames()[1].url()).origin,
+    demo.origin,
+    "preview keeps its own origin",
+  );
+  assert.equal(await frame.locator('[data-plan="a"]').getAttribute("aria-pressed"), "true");
+  await shot();
+  await frame.locator('[data-plan="b"]').click();
+  assert.equal(await frame.locator("#chart strong").first().textContent(), "91%");
+  await shot();
+  await frame.locator("summary").click();
+  assert(await frame.locator("details p").isVisible());
+  await shot();
+  await page.screenshot({ path: output + "/preview-desktop.png" });
+  await page.click('[data-tab="chat"]');
+  await page.click('[data-tab="preview"]');
+  assert.equal(
+    await frame.locator('[data-plan="b"]').getAttribute("aria-pressed"),
+    "true",
+    "switching tabs preserves the interactive page",
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await frame.locator('[data-plan="a"]').tap();
+  assert.equal(await frame.locator("#chart strong").first().textContent(), "72%");
+  await page.frames()[1].evaluate(() => scrollTo(0, 0));
+  assert(await page.frames()[1].evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page.screenshot({ path: output + "/preview-mobile.png" });
+  await page.click("#reloadPreview");
+  await page.waitForFunction(() => previewView.state === "ready");
+  assert.equal(await frame.locator('[data-plan="a"]').getAttribute("aria-pressed"), "true");
+  if (publish)
+    await promisify(execFile)(
+      "ffmpeg",
+      [
+        "-y",
+        "-loglevel",
+        "error",
+        "-framerate",
+        "1/2",
+        "-i",
+        frames + "/frame-%d.png",
+        "-filter_complex",
+        "[0:v]scale=960:-1,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=bayer:bayer_scale=3",
+        "-loop",
+        "0",
+        output + "/preview.gif",
+      ],
+      { timeout: 30000 },
+    );
+  await page.click('[data-tab="chat"]');
+}
+
 // This is the real frontend behind an isolated fixture API, not a drawn mockup.
 export async function exerciseAppearance({ publish = false } = {}) {
   const demo = await createDemo();
@@ -102,6 +170,7 @@ export async function exerciseAppearance({ publish = false } = {}) {
     browser = await chromium.launchPersistentContext(demo.directory + "/browser", {
       executablePath: process.env.DESK_CHROMIUM,
       headless: true,
+      hasTouch: true,
       viewport: { width: 1360, height: 900 },
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
       env: { ...process.env, TMPDIR: process.env.TMPDIR },
@@ -204,11 +273,29 @@ export async function exerciseAppearance({ publish = false } = {}) {
     await page.reload();
     await page.waitForSelector("#mascotToggle");
     assert.equal(await page.getAttribute("html", "data-mascot"), "off");
+    assert(await page.locator(".pet-sizes").isHidden());
     assert(await page.locator(".brand .pet-image").isHidden());
     await page.click('[data-tab="chat"]');
     assert(await page.locator(".status-pet").isHidden());
     await page.click('[data-tab="settings"]');
     await page.check("#mascotToggle");
+    assert(await page.locator(".pet-sizes").isVisible());
+    await page.setViewportSize({ width: 320, height: 640 });
+    for (const [size, width] of [
+      ["small", 32],
+      ["medium", 40],
+      ["large", 56],
+    ]) {
+      await page.click(`button[data-pet-size="${size}"]`);
+      await page.reload();
+      await page.waitForSelector("#mascotToggle");
+      assert.equal(await page.getAttribute("html", "data-pet-size"), size);
+      await page.click('[data-tab="chat"]');
+      assert.equal((await page.locator(".status-pet").boundingBox()).width, width);
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await page.click('[data-tab="settings"]');
+    }
+    await page.click('button[data-pet-size="medium"]');
     await page.click('[data-preset="midnight"]');
     await page.click('[data-pet="robot"]');
     await page.reload();
@@ -285,6 +372,8 @@ export async function exerciseAppearance({ publish = false } = {}) {
       assert.equal(await pet.evaluate((img) => getComputedStyle(img).animationName), "none");
       await page.emulateMedia({ reducedMotion: "no-preference" });
     }
+    await exercisePreview(page, demo, output, publish);
+    if (publish) await captureCompanions(browser, demo, output);
     // Storage denial cannot break boot or theme switching.
     await page.addInitScript(() => {
       Storage.prototype.getItem = () => {
@@ -306,7 +395,6 @@ export async function exerciseAppearance({ publish = false } = {}) {
     await page.waitForSelector("#login:not(.hidden)");
     await page.locator(".login .pet-image").evaluate((img) => img.decode());
     await page.screenshot({ path: demo.directory + "/login-mobile.png" });
-    if (publish) await captureCompanions(browser, demo, output);
     return output;
   } finally {
     await browser?.close();

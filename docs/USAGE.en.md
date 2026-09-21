@@ -4,7 +4,7 @@ English · [简体中文](USAGE.md)
 
 ## Continue a session
 
-Sessions open in chat. Expand execution records or show conversation only. The sidebar supports recency ordering and pins; on mobile it collapses, with search on demand.
+Sessions open in chat. Expand execution records or show conversation only. The sidebar supports pins and recency ordering on refresh; switching chats keeps rows in place. On mobile it collapses, with search on demand.
 
 The composer forwards text and Enter to the original Codex terminal. It does not start another model: model, reasoning effort, tools, network access and quotas belong to that process. Website authentication is separate from Codex authentication.
 
@@ -18,7 +18,7 @@ For uncertain sends, inspect the terminal before retrying. Removing a failed rec
 
 Choose Graphite, Midnight or Paper independently of Nailong, Duck, Cat or Robot. Preferences stay in this browser. Login and sidebar companions gently breathe, sway or float when idle; tap for a bigger gesture and a bubble. The chat-status companion is also tappable, with running/waiting hints. Bubbles disappear after 3.5 seconds, on outside tap or Escape. No automatic audio, model calls or terminal input. Companions can be hidden; motion respects `prefers-reduced-motion`.
 
-Instance defaults go in `config.json`:
+In Settings, choose Small / Standard / Large or hide companions entirely. Size and visibility persist in this browser, including after login. Instance defaults go in `config.json`:
 
 ```json
 {

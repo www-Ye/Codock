@@ -378,9 +378,8 @@ async function route() {
   chatView.clear();
   previewView.reset();
   const name = location.pathname.match(/^\/s\/([a-z0-9_-]+)$/)?.[1];
-  sessions.sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0));
   current = sessions.find((s) => s.name === name) || null;
-  sessionView.update(sessions, current);
+  sessionView.select(current);
   sessionView.navigated();
   document.body.classList.remove("terminal-mode", "chat-mode", "workspace-mode");
   $("#home").classList.toggle("hidden", Boolean(current));

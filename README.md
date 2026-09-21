@@ -20,11 +20,19 @@ English · [简体中文](README.zh-CN.md)
 - **See the result** — HTML, images and video, one preview per session.
 - **Make it yours** — Three palettes, four animated companions. Tap for a gesture and a bubble, or turn them off.
 
+### From chat to a live page
+
+<p align="center">
+  <a href="docs/assets/preview-desktop.png"><img src="docs/assets/preview.gif" width="72%" alt="Open HTML from chat, switch chart options and expand details in the real preview"></a>
+  <img src="docs/assets/preview-mobile.png" width="24%" alt="Interactive HTML preview on mobile">
+</p>
+<p align="center"><sub>Actual UI · Interactive sample HTML · Isolated preview origin, not a screenshot viewer.</sub></p>
+
 <p align="center">
   <img src="docs/assets/companions.gif" width="390" alt="Actual clicks: Nailong, Duck, Cat and Robot animate and show speech bubbles">
   <img src="docs/assets/companion-mobile.png" width="195" alt="Tap a companion in mobile chat to show a bubble">
 </p>
-<p align="center"><sub>Tap to say hello. Actual UI interactions; animation shows the login mascot.</sub></p>
+<p align="center"><sub>Companions stay with you after login. Tap to say hello; choose a size or hide them in Settings.</sub></p>
 
 ## Start here
 

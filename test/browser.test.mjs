@@ -512,11 +512,11 @@ test(
     await page.click('[data-tab="preview"]');
     const demo = page.frameLocator("#previewFrame");
     await demo.locator("h1").waitFor();
-    assert.equal(await demo.locator("h1").textContent(), "从终端到手机，直接查看成果。");
-    await demo.locator("#hello").click();
-    assert.equal(await demo.locator("#count").textContent(), "1");
-    await demo.locator("#mode").click();
-    assert.equal(await demo.locator("#mode").getAttribute("aria-pressed"), "true");
+    assert.equal(await demo.locator("h1").textContent(), "不止看回复，把成果直接打开。");
+    await demo.locator('[data-plan="b"]').click();
+    assert.equal(await demo.locator("#chart strong").first().textContent(), "91%");
+    await demo.locator("summary").click();
+    assert(await demo.locator("details p").isVisible());
     await page.waitForTimeout(350);
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({ path: dir + "/mobile.png", fullPage: true });
@@ -630,7 +630,7 @@ test(
     assert.equal(await page.locator("#writeMode").textContent(), "允许输入");
     assert.deepEqual(errors, []);
     await page.goto(origin + "/s/sandbox#preview");
-    await page.frameLocator("#previewFrame").locator("#hello").waitFor();
+    await page.frameLocator("#previewFrame").locator('[data-plan="b"]').waitFor();
     assert(
       await page.locator("#previewPanel").isVisible(),
       "preview deep link opens preview directly",
@@ -742,9 +742,12 @@ test(
     await page.waitForFunction(() => previewView.state === "offline");
     await browser.setOffline(false);
     await page.waitForFunction(() => previewView.state === "ready");
-    await page.frameLocator("#previewFrame").locator("#hello").click();
+    await page.frameLocator("#previewFrame").locator('[data-plan="b"]').click();
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
-    assert.equal(await page.frameLocator("#previewFrame").locator("#count").textContent(), "1");
+    assert.equal(
+      await page.frameLocator("#previewFrame").locator("#chart strong").first().textContent(),
+      "91%",
+    );
     // A late request from the old session cannot replace the next session's frame.
     let releaseOld;
     const oldGate = new Promise((resolve) => (releaseOld = resolve));

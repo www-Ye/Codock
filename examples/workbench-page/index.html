@@ -1,80 +1,207 @@
 <!doctype html>
 <html lang="zh-CN">
-  <meta charset="utf-8" /><meta
-    name="viewport"
-    content="width=device-width,initial-scale=1"
-  /><title>项目预览示例</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      font: 16px/1.7 system-ui;
-      background: #181c25;
-      color: #e0e5f0;
-    }
-    body {
-      margin: 0;
-    }
-    main {
-      max-width: 780px;
-      margin: auto;
-      padding: 32px 20px;
-    }
-    section {
-      border: 1px solid #3b4559;
-      border-radius: 16px;
-      padding: 24px;
-      margin-top: 24px;
-      background: #242c3b;
-    }
-    button {
-      padding: 12px 18px;
-      border-radius: 10px;
-      border: 1px solid #91a9d4;
-      background: #354769;
-      color: white;
-      font: inherit;
-      margin: 5px 5px 5px 0;
-    }
-    .night {
-      background: #10131c;
-    }
-    small {
-      color: #b1bbcf;
-    }
-    a {
-      color: #b6cfff;
-    }
-  </style>
-  <main>
-    <small>CODEX WORKBENCH / PREVIEW EXAMPLE</small>
-    <h1>从终端到手机，直接查看成果。</h1>
-    <p>
-      这是一个自包含的 HTML 示例，不需要额外端口或外部 CDN。绑定后，网页和媒体经过同一登录身份授权。
-    </p>
-    <section>
-      <h2>交互检查</h2>
-      <p>已执行 <strong id="count">0</strong> 次操作。</p>
-      <button id="hello">运行演示</button><button id="mode" aria-pressed="false">切换背景</button>
-      <p id="bubble" role="status">点击按钮，确认预览可交互。</p>
-    </section>
-    <section>
-      <h2>下一步</h2>
-      <p>
-        在这个目录放入报告、图片和 H.264 MP4
-        视频，使用相对链接连接资源。不要把密钥、数据库或整个项目根目录放进展示目录。
-      </p>
-      <p>演示不会执行服务器命令，也不会创建或修改 tmux。</p>
-    </section>
-  </main>
-  <script>
-    let count = 0;
-    document.querySelector("#hello").onclick = () => {
-      document.querySelector("#count").textContent = ++count;
-      document.querySelector("#bubble").textContent = "交互正常，可以继续展示项目成果。";
-    };
-    document.querySelector("#mode").onclick = (e) => {
-      const value = document.body.classList.toggle("night");
-      e.currentTarget.setAttribute("aria-pressed", String(value));
-    };
-  </script>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Codock · Live preview</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font:
+          15px/1.65 system-ui,
+          sans-serif;
+        background: #14151e;
+        color: #eeeef6;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      main {
+        max-width: 960px;
+        margin: auto;
+        padding: 36px;
+      }
+      .eyebrow {
+        color: #b7b2df;
+        font:
+          12px ui-monospace,
+          monospace;
+        letter-spacing: 0.14em;
+      }
+      h1 {
+        font-size: clamp(26px, 4vw, 44px);
+        line-height: 1.25;
+        letter-spacing: -0.04em;
+        margin: 20px 0 12px;
+        max-width: 650px;
+      }
+      p {
+        color: #b8b7ca;
+        margin: 0 0 24px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1.5fr 1fr;
+        gap: 16px;
+      }
+      section,
+      details {
+        background: #20212f;
+        border: 1px solid #353647;
+        border-radius: 18px;
+        padding: 22px;
+      }
+      h2 {
+        font-size: 17px;
+        margin: 0 0 18px;
+      }
+      .switch {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 20px;
+      }
+      button {
+        cursor: pointer;
+        font: inherit;
+        border: 1px solid #57556f;
+        color: #ddd9f0;
+        border-radius: 10px;
+        padding: 8px 14px;
+        background: transparent;
+        min-height: 44px;
+      }
+      button[aria-pressed="true"] {
+        background: #c7baff;
+        color: #20172e;
+        border-color: #c7baff;
+      }
+      .metric {
+        display: flex;
+        justify-content: space-between;
+        margin: 16px 0 6px;
+        color: #c6c4d8;
+      }
+      .bar {
+        background: #313144;
+        border-radius: 8px;
+        height: 12px;
+        overflow: hidden;
+      }
+      .bar i {
+        display: block;
+        width: var(--value);
+        height: 100%;
+        background: #b8a6ff;
+        border-radius: inherit;
+      }
+      .step {
+        display: flex;
+        gap: 12px;
+        margin: 14px 0;
+        align-items: start;
+      }
+      .step span {
+        color: #b8a6ff;
+        font:
+          14px ui-monospace,
+          monospace;
+        padding-top: 3px;
+      }
+      .step small {
+        display: block;
+        color: #b8b7ca;
+      }
+      details {
+        margin-top: 16px;
+      }
+      summary {
+        cursor: pointer;
+        min-height: 24px;
+      }
+      details p {
+        margin: 14px 0 0;
+      }
+      footer {
+        margin-top: 18px;
+        color: #a7a4bd;
+        font-size: 12px;
+      }
+      @media (max-width: 600px) {
+        main {
+          padding: 24px 16px;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        section,
+        details {
+          padding: 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">CODOCK / LIVE HTML PREVIEW</div>
+      <h1>不止看回复，<br />把成果直接打开。</h1>
+      <p>报告、图表、交互原型。Codex 写好 HTML，你在手机上接着看、接着点。</p>
+      <div class="grid">
+        <section>
+          <h2>方案对比 <small> / 点击切换</small></h2>
+          <div class="switch" role="group" aria-label="选择方案">
+            <button data-plan="a" aria-pressed="true">方案 A</button>
+            <button data-plan="b" aria-pressed="false">方案 B</button>
+          </div>
+          <div id="chart" aria-live="polite"></div>
+        </section>
+        <section>
+          <h2>从对话到成果</h2>
+          <div class="step">
+            <span>01</span>
+            <div>接着聊<small>沿用原来的 Codex 会话</small></div>
+          </div>
+          <div class="step">
+            <span>02</span>
+            <div>生成网页<small>HTML 与相对路径资源</small></div>
+          </div>
+          <div class="step">
+            <span>03</span>
+            <div>点开预览<small>手机和电脑都能交互</small></div>
+          </div>
+        </section>
+      </div>
+      <details>
+        <summary>展开实现说明</summary>
+        <p>
+          这是真实
+          HTML，不是截图。按钮、图表与折叠内容直接在预览中运行。静态页面不需要新开服务端口；独立预览域名与工作台登录态隔离。
+        </p>
+      </details>
+      <footer>演示数据，非性能测试结果 · 无外部 CDN · 不执行服务器命令</footer>
+    </main>
+    <script>
+      const plans = { a: [72, 86, 64], b: [91, 78, 88] };
+      const labels = ["完整度", "可读性", "交互性"];
+      function select(plan) {
+        document
+          .querySelectorAll("[data-plan]")
+          .forEach((button) =>
+            button.setAttribute("aria-pressed", String(button.dataset.plan === plan)),
+          );
+        document.querySelector("#chart").innerHTML = plans[plan]
+          .map(
+            (value, i) =>
+              `<div class="metric"><span>${labels[i]}</span><strong>${value}%</strong></div><div class="bar"><i style="--value:${value}%"></i></div>`,
+          )
+          .join("");
+      }
+      document
+        .querySelectorAll("[data-plan]")
+        .forEach((button) => (button.onclick = () => select(button.dataset.plan)));
+      select("a");
+    </script>
+  </body>
 </html>

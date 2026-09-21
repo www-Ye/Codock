@@ -30,6 +30,9 @@
   if (Object.hasOwn(presets, saved)) root.dataset.theme = saved;
   if (["on", "off"].includes(read("mascot"))) root.dataset.mascot = read("mascot");
   if (Object.hasOwn(characters, read("character"))) root.dataset.character = read("character");
+  root.dataset.petSize = ["small", "medium", "large"].includes(read("petSize"))
+    ? read("petSize")
+    : "medium";
   const color = (key) => getComputedStyle(root).getPropertyValue(key).trim();
   const terminal = () => ({
     background: color("--terminal"),
@@ -180,12 +183,40 @@
     settings.querySelector(".character-presets").append(button);
   }
   const toggle = settings.querySelector("#mascotToggle");
+  const sizes = document.createElement("div");
+  sizes.className = "pet-sizes";
+  sizes.setAttribute("role", "group");
+  sizes.setAttribute("aria-label", "玩偶大小");
+  sizes.append(document.createTextNode("大小"));
+  for (const [size, label] of [
+    ["small", "小"],
+    ["medium", "标准"],
+    ["large", "大"],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.petSize = size;
+    button.textContent = label;
+    button.setAttribute("aria-pressed", String(root.dataset.petSize === size));
+    button.onclick = () => {
+      dismiss();
+      root.dataset.petSize = size;
+      save("petSize", size);
+      sizes
+        .querySelectorAll("button")
+        .forEach((node) => node.setAttribute("aria-pressed", String(node === button)));
+    };
+    sizes.append(button);
+  }
+  settings.append(sizes);
   toggle.checked = root.dataset.mascot !== "off";
   toggle.onchange = () => {
     dismiss();
     root.dataset.mascot = toggle.checked ? "on" : "off";
+    sizes.hidden = !toggle.checked;
     save("mascot", root.dataset.mascot);
   };
+  sizes.hidden = !toggle.checked;
   document.querySelector("#settingsPanel")?.prepend(settings);
   updateCharacter();
   window.CodockTheme = {

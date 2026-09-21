@@ -20,11 +20,19 @@
 - **直接看成果**：HTML、图片、视频，每个会话一个预览。
 - **自己的桌面**：三套配色、四个会动的角色；点一下有动作和气泡，也可关闭。
 
+### 从聊天到可交互的网页
+
+<p align="center">
+  <a href="docs/assets/preview-desktop.png"><img src="docs/assets/preview.gif" width="72%" alt="真实操作：从聊天打开 HTML，切换图表方案、展开说明"></a>
+  <img src="docs/assets/preview-mobile.png" width="24%" alt="手机端可交互的 HTML 预览">
+</p>
+<p align="center"><sub>真实界面与示例 HTML · 独立域名预览，不是只能看的截图。</sub></p>
+
 <p align="center">
   <img src="docs/assets/companions.gif" width="390" alt="真实点击奶龙、小鸭、猫和机器人，展示动作与气泡">
   <img src="docs/assets/companion-mobile.png" width="195" alt="手机聊天中点击玩偶后的气泡">
 </p>
-<p align="center"><sub>点一下，陪你说句话。真实界面交互，动图展示登录页玩偶。</sub></p>
+<p align="center"><sub>登录后也有搭子陪你。点一下有回应；设置里可调大小或隐藏。</sub></p>
 
 ## 开始
 

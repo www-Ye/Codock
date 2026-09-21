@@ -81,6 +81,11 @@ class DeskSessions {
   }
   update(items, current) {
     this.items = [...items].sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0));
+    this.select(current);
+  }
+  select(current) {
+    // Navigation changes selection, not position. Apply recency on list refresh,
+    // independent of when asynchronous visit receipts arrive.
     this.current = current?.name;
     this.render();
   }
