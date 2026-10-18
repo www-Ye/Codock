@@ -1,3 +1,6 @@
+import { loadConfig, renderIndex } from "./lib/config.mjs";
+import { checkCredentials } from "./lib/preflight.mjs";
+import { homedir } from "node:os";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,10 +14,12 @@ import { GithubAuth, callbackPath } from "./lib/github-auth.mjs";
 import { startControl } from "./lib/control.mjs";
 import { Chats } from "./lib/chat.mjs";
 import { ChatSender } from "./lib/chat-send.mjs";
+import { ChatInteraction } from "./lib/chat-interaction.mjs";
 import { SessionUsage } from "./lib/session-usage.mjs";
-import { loadConfig, renderIndex } from "./lib/config.mjs";
-import { checkCredentials } from "./lib/preflight.mjs";
-import { homedir } from "node:os";
+import { SessionRuntime } from "./lib/session-runtime.mjs";
+import { VoiceAsr } from "./lib/voice-asr.mjs";
+import { SystemStatus } from "./lib/system-status.mjs";
+import { AccountQuota } from "./lib/account-quota.mjs";
 const root = path.dirname(fileURLToPath(import.meta.url));
 export async function createDesk(options = {}) {
   const config = {
@@ -38,9 +43,7 @@ export async function createDesk(options = {}) {
     config.runtime + "/config",
   ])
     await mkdir(d, { recursive: true, mode: 0o700 });
-  const auth = new Auth(path.join(config.runtime, "auth.json"), {
-    secure: config.secure,
-  });
+  const auth = new Auth(path.join(config.runtime, "auth.json"), { secure: config.secure });
   const github = new GithubAuth(
     path.join(config.runtime, "github.json"),
     config,
@@ -58,33 +61,52 @@ export async function createDesk(options = {}) {
     previews = new Previews(registry, auth, config);
   const chats = new Chats(registry, {
     home: config.codexHome || path.join(homedir(), ".codex"),
+    claudeHome: config.claudeHome || path.join(homedir(), ".claude"),
+    writers: terminals.writers,
     ...options.chatDependencies,
   });
   const chatSender = new ChatSender(chats, config.runtime, {
     terminals,
     ...options.chatSendDependencies,
   });
+  const chatInteraction = new ChatInteraction(chats, terminals);
   const usage = new SessionUsage(path.join(config.runtime, "session-usage.json"));
   await usage.init();
-  const wss = new WebSocketServer({
-    noServer: true,
-    maxPayload: 20000,
-    perMessageDeflate: false,
+  const runtimeStatus = new SessionRuntime(registry, {
+    home: chats.home,
+    readTurns:
+      options.runtimeDependencies?.readTurns ??
+      ((home, socket, panes) =>
+        chats
+          .readProcess({
+            home,
+            claudeHome: chats.claudeHome,
+            runtimeBatch: panes.map((pane) => ({ ...pane, socket })),
+          })
+          .then((result) => result.completions)),
   });
+  const voiceAsr = new VoiceAsr(config.runtime, options.voiceDependencies);
+  await voiceAsr.init();
+  const systemStatus = new SystemStatus(options.systemDependencies);
+  await systemStatus.init();
+  const accountQuota = new AccountQuota(chats.home, options.quotaDependencies);
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 20000, perMessageDeflate: false });
   const assets = {
     "/theme.js": ["public/theme.js", "text/javascript"],
-    "/mascots/nailong.webp": ["public/mascots/nailong.webp", "image/webp"],
-    "/mascots/duck.svg": ["public/mascots/duck.svg", "image/svg+xml"],
-    "/mascots/cat.svg": ["public/mascots/cat.svg", "image/svg+xml"],
-    "/mascots/robot.svg": ["public/mascots/robot.svg", "image/svg+xml"],
+    "/brand.css": ["public/brand.css", "text/css"],
+    "/workbench.svg": ["public/workbench.svg", "image/svg+xml"],
+    ...Object.fromEntries(
+      ["nailong.webp", "duck.svg", "cat.svg", "robot.svg"].map((n) => [
+        "/mascots/" + n,
+        ["public/mascots/" + n, n.endsWith(".svg") ? "image/svg+xml" : "image/webp"],
+      ]),
+    ),
     "/session-list.js": ["public/session-list.js", "text/javascript"],
     "/chat-view.js": ["public/chat-view.js", "text/javascript"],
     "/chat-markdown.js": ["public/chat-markdown.js", "text/javascript"],
     "/preview-view.js": ["public/preview-view.js", "text/javascript"],
-    "/workbench.svg": ["public/workbench.svg", "image/svg+xml"],
     "/app.js": ["public/app.js", "text/javascript"],
     "/style.css": ["public/style.css", "text/css"],
-    "/brand.css": ["public/brand.css", "text/css"],
     "/vendor/xterm.js": ["node_modules/@xterm/xterm/lib/xterm.js", "text/javascript"],
     "/vendor/xterm.css": ["node_modules/@xterm/xterm/css/xterm.css", "text/css"],
   };
@@ -96,11 +118,13 @@ export async function createDesk(options = {}) {
     });
     res.end(JSON.stringify(data));
   };
-  async function body(req) {
+  async function body(req, limit = 20000) {
     let result = "";
+    if (Number(req.headers["content-length"]) > limit)
+      throw Object.assign(Error("请求过大"), { status: 413 });
     for await (const b of req) {
       result += b;
-      if (Buffer.byteLength(result) > 20000)
+      if (Buffer.byteLength(result) > limit)
         throw Object.assign(Error("请求过大"), { status: 413 });
     }
     try {
@@ -155,7 +179,7 @@ export async function createDesk(options = {}) {
       }
       if (req.method === "POST" && route === "/api/auth/github/start") {
         if (config.authMode !== "github")
-          throw Object.assign(Error("此登录方式未启用"), { status: 403 });
+          throw Object.assign(Error("GitHub 登录未启用"), { status: 403 });
         const ip = config.trustProxy
           ? String(req.headers["x-real-ip"] || req.socket.remoteAddress)
           : req.socket.remoteAddress;
@@ -172,7 +196,7 @@ export async function createDesk(options = {}) {
       }
       if (req.method === "GET" && route === callbackPath) {
         if (config.authMode !== "github")
-          throw Object.assign(Error("此登录方式未启用"), { status: 403 });
+          throw Object.assign(Error("GitHub 登录未启用"), { status: 403 });
         try {
           const identity = await github.finish(req, url),
             token = auth.issue(identity),
@@ -221,7 +245,11 @@ export async function createDesk(options = {}) {
           res.end(
             (await readFile(path.join(root, file), "utf8")) +
               (/^#[0-9a-f]{6}$/i.test(config.brand?.accent || "")
-                ? `\n:root[data-theme]{--accent:${config.brand.accent};--yellow:${config.brand.accent}}`
+                ? "\n:root[data-theme]{--accent:" +
+                  config.brand.accent +
+                  ";--yellow:" +
+                  config.brand.accent +
+                  "}"
                 : ""),
           );
         else res.end(await readFile(path.join(root, file)));
@@ -230,6 +258,10 @@ export async function createDesk(options = {}) {
       const token = auth.get(req);
       if (!token) throw Object.assign(Error("请先登录终端台"), { status: 401 });
       auth.valid(token, !(route.endsWith("/chat") && url.searchParams.has("revision")));
+      if (req.method === "POST" && route === "/api/activity") {
+        json(res, 200, { ok: true });
+        return;
+      }
       if (req.method === "POST" && route === "/api/logout") {
         auth.sessions.delete(token);
         for (const c of terminals.clients) if (c.token === token) c.ws.close(1008, "已退出登录");
@@ -240,17 +272,66 @@ export async function createDesk(options = {}) {
         json(res, 200, { sessions: usage.list(await registry.list()) });
         return;
       }
+      if (req.method === "GET" && route === "/api/sessions/runtime") {
+        json(res, 200, await runtimeStatus.snapshot());
+        return;
+      }
+      if (req.method === "GET" && route === "/api/voice/status") {
+        json(res, 200, voiceAsr.status());
+        return;
+      }
+      if (req.method === "POST" && route === "/api/voice/prepare") {
+        json(res, 200, await voiceAsr.prepare(await body(req)));
+        return;
+      }
+      if (req.method === "POST" && route === "/api/voice/transcribe") {
+        json(res, 200, await voiceAsr.transcribe(await body(req, 1400000)));
+        return;
+      }
+      if (req.method === "GET" && route === "/api/system") {
+        json(res, 200, await systemStatus.snapshot());
+        return;
+      }
+      if (req.method === "GET" && route === "/api/account/quota") {
+        json(res, 200, await accountQuota.snapshot());
+        return;
+      }
       const visitMatch = route.match(/^\/api\/sessions\/([a-z0-9_-]+)\/visit$/);
       if (req.method === "POST" && visitMatch && registry.allowed.includes(visitMatch[1])) {
         await body(req);
         json(res, 200, { lastOpenedAt: await usage.visit(visitMatch[1]) });
         return;
       }
-      if (!config.chatEnabled && /^\/api\/sessions\/[^/]+\/chat/.test(route))
-        throw Object.assign(Error("聊天适配器未启用，请使用原终端"), {
-          status: 403,
-        });
+      if (!config.chatEnabled && /^\/api\/sessions\/[^/]+\/(chat|interaction)/.test(route))
+        throw Object.assign(Error("聊天未启用"), { status: 403 });
       const chatMatch = route.match(/^\/api\/sessions\/([a-z0-9_-]+)\/chat$/);
+      const interactionMatch = route.match(/^\/api\/sessions\/([a-z0-9_-]+)\/interaction$/);
+      if (interactionMatch && registry.allowed.includes(interactionMatch[1])) {
+        const name = interactionMatch[1];
+        if (req.method === "GET") {
+          json(
+            res,
+            200,
+            await chatInteraction.page(
+              name,
+              url.searchParams.get("identity"),
+              url.searchParams.get("binding"),
+            ),
+          );
+          return;
+        }
+        if (req.method === "POST") {
+          json(res, 200, await chatInteraction.answer(name, await body(req)));
+          return;
+        }
+      }
+      const interruptMatch = route.match(
+        /^\/api\/sessions\/([a-z0-9_-]+)\/interaction\/interrupt$/,
+      );
+      if (req.method === "POST" && interruptMatch && registry.allowed.includes(interruptMatch[1])) {
+        json(res, 200, await chatInteraction.interrupt(interruptMatch[1], await body(req)));
+        return;
+      }
       if (req.method === "GET" && chatMatch) {
         const view = await chats.page(chatMatch[1], url.searchParams),
           extra = {};
@@ -266,13 +347,11 @@ export async function createDesk(options = {}) {
               extra.receipt = await chatSender.status(
                 chatMatch[1],
                 url.searchParams.get("receipt"),
-                {
-                  identity: url.searchParams.get("identity"),
-                  binding: view.binding,
-                },
+                { identity: url.searchParams.get("identity"), binding: view.binding },
               );
             } catch (e) {
               if (e.status !== 404) throw e;
+              extra.receiptMissing = true;
             }
           }
         }
@@ -290,6 +369,14 @@ export async function createDesk(options = {}) {
         json(res, 200, await chatSender.status(receiptMatch[1], receiptMatch[2]));
         return;
       }
+      if (req.method === "POST" && receiptMatch && registry.allowed.includes(receiptMatch[1])) {
+        json(res, 200, await chatSender.recover(receiptMatch[1], receiptMatch[2], await body(req)));
+        return;
+      }
+      if (req.method === "PATCH" && receiptMatch && registry.allowed.includes(receiptMatch[1])) {
+        json(res, 200, await chatSender.release(receiptMatch[1], receiptMatch[2], await body(req)));
+        return;
+      }
       if (req.method === "DELETE" && receiptMatch && registry.allowed.includes(receiptMatch[1])) {
         json(res, 200, await chatSender.dismiss(receiptMatch[1], receiptMatch[2], await body(req)));
         return;
@@ -298,9 +385,7 @@ export async function createDesk(options = {}) {
       if (match && registry.allowed.includes(match[1])) {
         const name = match[1];
         if (req.method === "PATCH" && !match[2]) {
-          json(res, 200, {
-            session: await registry.update(name, await body(req)),
-          });
+          json(res, 200, { session: await registry.update(name, await body(req)) });
           return;
         }
         if (req.method === "POST" && match[2] === "bind") {
@@ -319,9 +404,7 @@ export async function createDesk(options = {}) {
     } catch (e) {
       const status = e.status || (e.code === "ENOENT" ? 404 : 500);
       if (!res.headersSent)
-        json(res, status, {
-          error: status === 500 ? "服务暂时不可用，请稍后重试" : e.message,
-        });
+        json(res, status, { error: status === 500 ? "服务暂时不可用，请稍后重试" : e.message });
       else res.destroy();
       if (status === 500) console.error("request failed", e.code || e.name);
     }
@@ -362,9 +445,12 @@ export async function createDesk(options = {}) {
     auth,
     github,
     registry,
+    runtimeStatus,
+    systemStatus,
     terminals,
     previews,
     close: async () => {
+      voiceAsr.close();
       terminals.close();
       previews.close();
       for (const ws of wss.clients) ws.terminate();
