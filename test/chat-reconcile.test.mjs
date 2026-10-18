@@ -13,7 +13,11 @@ test(
       text = "手动回车的中文原文\n第二行";
     let accepted = false,
       sends = 0,
-      firstId;
+      firstId,
+      hold = false,
+      resume,
+      ambiguous = false,
+      ambiguousId;
     const desk = await createDesk({
       runtime: dir + "/runtime",
       socket: dir + "/absent.sock",
@@ -48,6 +52,11 @@ test(
       chatSendDependencies: {
         deliver: async (name, entry) => {
           sends++;
+          if (hold) return new Promise((r) => (resume = r));
+          if (ambiguous) {
+            ambiguousId = entry.requestId;
+            return { state: "unknown", message: "回车未确认" };
+          }
           if (sends === 1) {
             firstId = entry.requestId;
             return { state: "unknown", message: "文字已粘贴但回车未确认" };
@@ -72,11 +81,11 @@ test(
     const origin = "http://127.0.0.1:" + desk.server.address().port;
     desk.config.origin = origin;
     const browser = await chromium.launchPersistentContext(dir + "/profile", {
-      executablePath: process.env.DESK_CHROMIUM,
+      executablePath: process.env.CHROME_BIN || chromium.executablePath(),
       headless: true,
       viewport: { width: 390, height: 844 },
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      env: { ...process.env, TMPDIR: process.env.TMPDIR },
+      env: { ...process.env, TMPDIR: dir },
     });
     t.after(() => browser.close());
     const [name, value] = desk.auth
@@ -94,7 +103,11 @@ test(
     await page.waitForFunction(() =>
       document.querySelector("#chatSendStatus").textContent.includes("回车未确认"),
     );
-    assert(await page.locator("#chatDraft").isDisabled());
+    assert.equal(
+      await page.locator("#chatDraft").isDisabled(),
+      false,
+      "uncertain delivery must not lock draft editing",
+    );
     // Represents the original Codex committing the user's manual Enter.
     accepted = true;
     await page.waitForFunction(() => !document.querySelector("#chatSend").disabled);
@@ -118,7 +131,7 @@ test(
     await page.evaluate(
       (id) =>
         sessionStorage.setItem(
-          "workbench.chat.receipt.sandbox:test:123:456:11111111-1111-1111-1111-111111111111",
+          "codock.chat.receipt.sandbox:test:123:456:11111111-1111-1111-1111-111111111111",
           id,
         ),
       firstId,
@@ -129,13 +142,79 @@ test(
     assert.equal(
       await page.evaluate(() =>
         sessionStorage.getItem(
-          "workbench.chat.receipt.sandbox:test:123:456:11111111-1111-1111-1111-111111111111",
+          "codock.chat.receipt.sandbox:test:123:456:11111111-1111-1111-1111-111111111111",
         ),
       ),
       null,
     );
     assert.equal(sends, 2);
     assert.deepEqual(errors, []);
+    // A request lost before reaching the server has no durable intent to reconcile.
+    let lost;
+    const endpoint = origin + "/api/sessions/sandbox/chat";
+    await page.route(endpoint, async (route) => {
+      if (route.request().method() === "POST") {
+        lost = route.request().postDataJSON();
+        await route.abort();
+      } else await route.continue();
+    });
+    await page.fill("#chatDraft", "断线草稿");
+    await page.click("#chatSend");
+    await page.waitForFunction(() => !document.querySelector("#chatSend").disabled);
+    assert.equal(await page.inputValue("#chatDraft"), "断线草稿");
+    assert.equal(sends, 2);
+    const replay = await browser.request.post(endpoint, {
+      headers: { Origin: origin },
+      data: lost,
+    });
+    assert.equal((await replay.json()).state, "failed", "late original request cannot deliver");
+    // Recover an old browser ID even after reload; do not manufacture a message.
+    await page.evaluate(() =>
+      sessionStorage.setItem(
+        "codock.chat.receipt.sandbox:test:123:456:11111111-1111-1111-1111-111111111111",
+        crypto.randomUUID(),
+      ),
+    );
+    await page.reload();
+    await page.waitForFunction(() => !document.querySelector("#chatSend").disabled);
+    await page.fill("#chatDraft", "可以继续写");
+    assert.equal(sends, 2);
+    await page.unroute(endpoint);
+    // Editing the next draft while awaiting a response must not erase that draft.
+    hold = true;
+    await page.fill("#chatDraft", "本次发送");
+    await page.click("#chatSend");
+    await page.fill("#chatDraft", "下一条草稿");
+    while (!resume) await new Promise((r) => setTimeout(r, 5));
+    resume({ state: "submitted" });
+    await page.waitForFunction(() => !document.querySelector("#chatSend").disabled);
+    assert.equal(await page.inputValue("#chatDraft"), "下一条草稿");
+    hold = false;
+    ambiguous = true;
+    await page.fill("#chatDraft", "保留的待核对原文");
+    await page.click("#chatSend");
+    await page.waitForFunction(() => Boolean(document.querySelector(".release-unknown")));
+    assert.equal(await page.locator("#chatSend").isDisabled(), true);
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.click(".release-unknown");
+    await page.waitForFunction(() => !document.querySelector("#chatSend").disabled);
+    assert.equal(
+      await page.locator('[data-receipt="' + ambiguousId + '"]').count(),
+      1,
+      "released message stays visible",
+    );
+    assert.equal(
+      await page
+        .locator('[data-receipt="' + ambiguousId + '"] .micro')
+        .last()
+        .textContent(),
+      "未确认 · 已解锁",
+    );
+    assert.equal(sends, 4, "release never resends or presses Enter");
+    await page.reload();
+    await page.waitForFunction(() => !document.querySelector("#chatSend").disabled);
+    assert.equal(await page.locator('[data-receipt="' + ambiguousId + '"]').count(), 1);
+    assert.equal(sends, 4);
     console.log("Receipt reconciliation browser:", dir);
   },
 );

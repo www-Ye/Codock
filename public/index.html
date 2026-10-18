@@ -26,9 +26,7 @@
   <body>
     <section id="login" class="login">
       <div class="login-card">
-        <div class="workbench large" aria-hidden="true">
-          <img src="/workbench.svg" alt="" />
-        </div>
+        <div class="workbench large" aria-hidden="true"><img src="/workbench.svg" alt="" /></div>
         <p class="eyebrow">PICK UP. SHIP ON.</p>
         <h1>{{BRAND_NAME}}</h1>
         <p class="muted">{{BRAND_TAGLINE}}</p>
@@ -55,10 +53,10 @@
               required /></label
           ><button class="primary" id="loginButton" disabled>进入工作台 <span>→</span></button>
         </form>
-        <p id="loginMessage" role="status" class="feedback">正在连接工作台…</p>
+        <p id="loginMessage" role="status" class="feedback">正在连接…</p>
         <button id="retryConnection" class="quiet hidden" type="button">重新连接</button
         ><noscript>请启用浏览器 JavaScript 后重新打开。</noscript>
-        <p class="micro">仅供授权人员使用 · 操作沿用服务器用户权限</p>
+        <p class="micro">这是服务器终端，仅供本人使用。</p>
       </div>
     </section>
     <div id="app" class="hidden">
@@ -73,7 +71,7 @@
           ☰</button
         ><a href="/" class="brand"
           ><span class="workbench"><img src="/workbench.svg" alt="" /></span
-          ><span>{{BRAND_NAME}}<small>对话 · 执行 · 成果</small></span></a
+          ><span>{{BRAND_NAME}}<small>{{BRAND_TAGLINE}}</small></span></a
         >
         <div class="workspace-toolbar">
           <div class="workspace-head">
@@ -89,7 +87,7 @@
         <details id="deskMenu" class="header-actions">
           <summary aria-label="工作台菜单">⋯</summary>
           <div class="desk-menu-items">
-            <a href="/">全部会话</a
+            <a href="/">全部会话</a><a href="/#system">机器状态</a
             ><button id="refresh" class="quiet" aria-label="刷新会话">刷新会话</button
             ><button id="logout" class="quiet">退出登录</button>
           </div>
@@ -104,7 +102,7 @@
       <aside id="sessionSidebar" class="session-sidebar" aria-label="所有会话">
         <div class="sidebar-heading">
           <div>
-            <h2>Codex 会话</h2>
+            <h2>我的会话</h2>
             <p id="sessionCount" class="micro"></p>
           </div>
           <button
@@ -127,7 +125,7 @@
         <nav id="sessionList" aria-label="选择会话"></nav>
         <div class="sidebar-foot">
           <span class="workbench"><img src="/workbench.svg" alt="" /></span>
-          <p>连接原来的工作现场。<small>关闭网页不会结束原会话</small></p>
+          <p>事情慢慢做，进度都在。<small>关闭网页不会结束原会话</small></p>
         </div>
       </aside>
       <div id="deskContent">
@@ -135,8 +133,8 @@
           <div class="intro">
             <div>
               <p class="eyebrow">PICK UP WHERE YOU LEFT OFF</p>
-              <h1>继续 Codex 工作</h1>
-              <p class="muted">同一段 Codex 对话，换个设备继续。</p>
+              <h1>今天，继续哪件事？</h1>
+              <p class="muted">原来的终端，原来的进度。</p>
             </div>
             <div class="home-search">
               <button id="searchToggle" class="quiet" aria-controls="search" aria-expanded="false">
@@ -150,6 +148,25 @@
               />
             </div>
           </div>
+          <section id="system" class="system-overview" aria-label="机器状态">
+            <div class="system-heading">
+              <div>
+                <h2>机器状态</h2>
+                <p id="systemTime" class="micro" role="status">正在读取…</p>
+              </div>
+              <button id="systemRefresh" class="quiet" type="button">刷新</button>
+            </div>
+            <div class="system-grid">
+              <article class="system-meter">
+                <span>CPU</span><strong id="systemCpu">—</strong><i><b id="systemCpuBar"></b></i>
+              </article>
+              <article class="system-meter">
+                <span>内存</span><strong id="systemMemory">—</strong
+                ><small id="systemMemoryDetail"></small><i><b id="systemMemoryBar"></b></i>
+              </article>
+            </div>
+            <div id="systemGpus" class="system-gpus"></div>
+          </section>
           <div id="cards" class="cards"></div>
           <p class="micro home-note">关闭网页不会结束会话 · 默认只读，按需允许输入</p>
         </main>
@@ -169,7 +186,7 @@
                   ><span id="chatRunLabel" role="status" aria-live="polite"
                     >状态待确认</span
                   ></button
-                ><span id="chatMeta">原 Codex 对话与执行记录</span>
+                ><span id="chatMeta">原来的对话，换一种看法</span>
               </div>
               <div>
                 <button id="chatActivityToggle" class="quiet" aria-pressed="false">仅看对话</button
@@ -179,6 +196,7 @@
             <button id="chatAttention" class="chat-attention hidden" type="button">
               有问题等你回答 · 查看现场 →
             </button>
+            <section id="chatQuestion" class="chat-question hidden" aria-live="polite"></section>
             <div id="chatScroll" tabindex="0" aria-label="上下滑动阅读聊天记录">
               <button id="chatOlder" class="quiet hidden">查看更早的消息 ↑</button>
               <p id="chatStatus" role="status">正在读取对话…</p>
@@ -198,9 +216,7 @@
                   id="chatVoice"
                   class="quiet"
                   type="button"
-                  aria-label="语音输入"
-                  aria-expanded="false"
-                  aria-controls="voicePanel"
+                  aria-label="轻点开始听写，或按住说话"
                   title="语音输入"
                   disabled
                 >
@@ -218,31 +234,21 @@
                   </svg></button
                 ><button id="chatSend" class="primary" disabled>发送 ↑</button>
               </form>
-              <div id="voicePanel" class="voice-panel hidden">
-                <p id="voiceStatus" role="status"></p>
-                <div class="voice-actions">
-                  <select id="voiceLang" aria-label="听写语言">
-                    <option value="zh-CN">中文</option>
-                    <option value="en-US">English</option></select
-                  ><button id="voiceStart" type="button">开始听写</button
-                  ><button id="voiceClose" class="quiet" type="button" aria-label="关闭语音输入">
-                    关闭
-                  </button>
-                </div>
-              </div>
+              <p id="voiceStatus" class="voice-inline hidden" role="status"></p>
               <p id="chatSendStatus" role="status">正在连接原会话…</p>
               <div>
                 <button id="chatLatest" class="quiet">↓ 最新</button
-                ><button id="chatPreview" class="quiet">查看网页 ↗</button
                 ><button id="chatReceipt" class="quiet hidden">检查回执</button
                 ><button
-                  id="chatTerminal"
+                  id="chatModel"
                   class="quiet"
+                  type="button"
                   aria-controls="chatControls"
                   aria-expanded="false"
+                  disabled
                 >
-                  现场 / 按键</button
-                ><button id="chatInterrupt" class="quiet danger">中断…</button>
+                  切换模型</button
+                ><button id="chatInterrupt" class="quiet danger">中断本轮</button>
               </div>
             </div>
           </section>
@@ -268,9 +274,7 @@
               ><button id="reconnect" class="quiet" aria-label="重新连接终端">重连</button>
             </div>
             <div class="terminal-view">
-              <div class="terminal-scroll" id="terminalScroll">
-                <div id="terminal"></div>
-              </div>
+              <div class="terminal-scroll" id="terminalScroll"><div id="terminal"></div></div>
               <section
                 id="historyDialog"
                 class="history-inline hidden"
@@ -412,15 +416,12 @@
               </div>
               <button class="primary">保存设置</button>
               <p id="settingsMessage" role="status"></p>
+              <button id="testVibration" type="button" class="quiet">测试手机振动</button>
+              <p id="vibrationStatus" class="micro" role="status"></p>
             </form>
           </section>
         </main>
-        <footer>
-          {{BRAND_NAME}} · 远程工作空间
-          <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer"
-            >{{LEGAL_TEXT}}</a
-          >
-        </footer>
+        <footer>{{BRAND_NAME}} · {{LEGAL_TEXT}}</footer>
       </div>
     </div>
     <div id="toast" role="status" class="toast hidden"></div>

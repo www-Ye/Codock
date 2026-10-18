@@ -53,6 +53,8 @@ Leave other defaults initially. Main and preview origins must be distinct but sh
 
 ## 4. Verify startup
 
+For Claude Code, `claudeHome` defaults to the current user's `.claude` directory. Optional [local dictation](VOICE.en.md) is configured separately; it is not required for chat or previews.
+
 ```sh
 npm run check
 npm start

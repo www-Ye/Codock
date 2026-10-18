@@ -3,12 +3,14 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import stat
 from datetime import datetime
 from pathlib import Path
 
 UUID = re.compile(r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
+DESK_CONTEXT = re.compile(r"^【当前网页会话 ([a-z0-9_-]+)；预览目标 \1；不要用工具进程的 TMUX/TMUX_PANE 判断】\n")
 ACTION_TYPES = {
     "commandExecution": "执行命令", "fileChange": "修改文件", "webSearch": "网页搜索",
     "mcpToolCall": "调用工具", "dynamicToolCall": "调用工具", "functionCallOutput": "工具结果",
@@ -143,6 +145,49 @@ def locate(pane_pid, home):
     return candidates[0]
 
 
+def resume_from_argv(command_line):
+    """Identify only the saved thread named by an exact CLI resume launch."""
+    args = [part.decode("utf-8", "replace") for part in command_line.split(b"\0") if part]
+    if len(args) != 3 or Path(args[0]).name != "codex" or args[1] != "resume" or not UUID.fullmatch(args[2]):
+        return None
+    return args[2]
+
+
+def resume_from_ui(command_line, screen):
+    """Use the active Codex resume banner only with the matching CLI argv."""
+    initial = resume_from_argv(command_line)
+    if not initial:
+        return None
+    hints = []
+    for line in screen.splitlines():
+        if not re.search(r"\bsession\b", line, re.IGNORECASE) or not re.search(r"\bcodex resume\b", line, re.IGNORECASE):
+            continue
+        hints.extend(match.group() for match in re.finditer(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", line))
+    return initial if len(hints) == 1 and hints[0] == initial else None
+
+
+def resume_initial(pid):
+    try:
+        return resume_from_argv(Path(f"/proc/{pid}/cmdline").read_bytes())
+    except OSError:
+        return None
+
+
+def resume_hint(pid, request):
+    pane, socket = request.get("pane"), request.get("socket")
+    if not isinstance(pane, str) or not re.fullmatch(r"%\d+", pane) or not isinstance(socket, str) or not os.path.isabs(socket):
+        return None
+    try:
+        command_line = Path(f"/proc/{pid}/cmdline").read_bytes()
+        screen = subprocess.run(["tmux", "-S", socket, "capture-pane", "-p", "-t", pane, "-S", "0"],
+                                capture_output=True, text=True, timeout=2, check=True).stdout
+        if len(screen) > 65536:
+            return None
+        return resume_from_ui(command_line, screen)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def database(home, name):
     connection = sqlite3.connect((home / name).as_uri() + "?mode=ro", uri=True, timeout=1)
     connection.execute("PRAGMA query_only=ON")
@@ -170,7 +215,7 @@ def visible(row):
                 parts.append(part.get("text", ""))
             elif part.get("type") in ("image", "localImage"):
                 parts.append("〔图片附件 · 请在原终端查看〕")
-        text = "\n".join(parts)
+        text = DESK_CONTEXT.sub("", "\n".join(parts), count=1)
     else:
         return activity(item, row)
     if not isinstance(text, str) or not text.strip():
@@ -287,14 +332,24 @@ def read_legacy(home, thread, rollout, before=None, revision=None, window_bytes=
         if not lookup and before is None and revision == stamp:
             return {"unchanged": True, "revision": stamp}
         end = snapshot.st_size if before is None else before
-        start = max(0, end-window_bytes)
-        source.seek(start)
-        data = source.read(end-start)
-        # A trailing partial append isn't a record. Never render incomplete JSON.
-        cursor = data.rfind(b"\n") + 1
-        floor = data.find(b"\n") + 1 if start else 0
+        skipped, scanned = False, 0
+        while True:
+            start = max(0, end-window_bytes)
+            source.seek(start)
+            data = source.read(end-start)
+            # A trailing partial append isn't a record. Never render incomplete JSON.
+            cursor = data.rfind(b"\n") + 1
+            floor = data.find(b"\n") + 1 if start else 0
+            if cursor > floor or start == 0 or scanned >= 64*1024*1024:
+                break
+            # One tool record can exceed a whole window. Walk backward without
+            # parsing or retaining that record, then show earlier conversation.
+            next_end = start+floor if 0 < floor < len(data) else start
+            scanned += end-next_end
+            end = next_end
+            skipped = True
         messages, budget, public_count = [], 0, 0
-        skipped = bool(start and (floor > 524288 or cursor == 0))
+        skipped = skipped or bool(start and (floor > 524288 or cursor == 0))
         while cursor > floor:
             previous = data.rfind(b"\n", 0, cursor-1) + 1
             if previous < floor:
@@ -347,15 +402,56 @@ def read_legacy(home, thread, rollout, before=None, revision=None, window_bytes=
 
 def main(request):
     home = Path(request["home"]).resolve(strict=True)
+    if "runtimeBatch" in request:
+        rows = request["runtimeBatch"]
+        if not isinstance(rows, list) or len(rows) > 32:
+            raise ValueError("runtime batch")
+        completions = []
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("pid"), int) or row["pid"] < 1 or not isinstance(row.get("pane"), str) or not re.fullmatch(r"%\d+", row["pane"]) or not isinstance(row.get("socket"), str):
+                raise ValueError("runtime pane")
+            try:
+                view = main({"home": str(home), "pid": row["pid"], "pane": row["pane"], "socket": row["socket"], "runtimeOnly": True})
+                marker = view.get("completion") if view.get("available") else None
+                completions.append({"binding": view["binding"], **marker} if marker else None)
+            except (ValueError, KeyError, OSError, sqlite3.Error):
+                completions.append(None)
+        return {"completions": completions}
     pid, started, locks = locate(int(request["pid"]), home)
+    fallback = False
+    read_only = False
+    verified = request.get("verifiedThread")
+    if verified is not None and (not isinstance(verified, str) or not UUID.fullmatch(verified)):
+        raise ValueError("verified thread")
     with database(home, "state_5.sqlite") as state:
         threads = []
         for thread in locks:
             row = state.execute("SELECT id,source,history_mode,model,reasoning_effort,rollout_path FROM threads WHERE id=?", (thread,)).fetchone()
             if row and row["source"] in ("cli", "vscode"):
                 threads.append(dict(row))
+        if verified:
+            if threads and (len(threads) != 1 or threads[0]["id"] != verified):
+                return {"available": False, "reason": "changed"}
+            row = state.execute("SELECT id,source,history_mode,model,reasoning_effort,rollout_path FROM threads WHERE id=?", (verified,)).fetchone()
+            if not row or row["source"] not in ("cli", "vscode"):
+                return {"available": False, "reason": "changed"}
+            threads = [dict(row)]
+        elif not threads:
+            visible = resume_hint(pid, request)
+            if visible:
+                row = state.execute("SELECT id,source,history_mode,model,reasoning_effort,rollout_path FROM threads WHERE id=?", (visible,)).fetchone()
+                if row and row["source"] == "cli":
+                    threads.append(dict(row))
+                    fallback = True
+            if not threads:
+                initial = resume_initial(pid)
+                if initial:
+                    row = state.execute("SELECT id,source,history_mode,model,reasoning_effort,rollout_path FROM threads WHERE id=?", (initial,)).fetchone()
+                    if row and row["source"] == "cli":
+                        threads.append(dict(row))
+                        read_only = True
     if len(threads) != 1:
-        raise ValueError("mapping")
+        return {"available": False, "reason": "unverified_codex"}
     thread = threads[0]
     if thread["history_mode"] not in ("paginated", "legacy"):
         return {"available": False, "reason": "format"}
@@ -369,7 +465,13 @@ def main(request):
     lookup = request.get("lookup")
     if lookup is not None and (not request.get("binding") or not isinstance(lookup, dict) or not isinstance(lookup.get("text"), str) or not 0 < len(lookup["text"].encode()) <= 12000 or not isinstance(lookup.get("since"), int) or lookup["since"] < 0):
         raise ValueError("receipt lookup")
-    if thread["history_mode"] == "legacy":
+    if request.get("identityOnly") is True:
+        result = {}
+    elif request.get("runtimeOnly") is True:
+        with database(home, "thread_history_1.sqlite") as db:
+            final = db.execute("SELECT item.rollout_ordinal,turn.completed_at FROM thread_turns AS turn JOIN thread_items AS item ON item.thread_id=turn.thread_id AND item.turn_id=turn.turn_id AND item.item_id=turn.final_agent_item_id WHERE turn.thread_id=? AND turn.status='completed' AND turn.completed_at IS NOT NULL ORDER BY turn.rollout_ordinal DESC LIMIT 1", (thread["id"],)).fetchone()
+        result = {"completion": {"id": str(final[0]), "time": int(final[1]) * 1000} if final else None}
+    elif thread["history_mode"] == "legacy":
         result = read_legacy(home, thread["id"], thread["rollout_path"], before, revision, lookup=lookup)
     else:
         result = read_history(home, thread["id"], before, revision, lookup=lookup)
@@ -377,8 +479,12 @@ def main(request):
         return result
     if locate(int(request["pid"]), home) != (pid, started, locks):
         return {"available": False, "reason": "changed"}
+    if fallback and resume_hint(pid, request) != thread["id"]:
+        return {"available": False, "reason": "changed"}
+    if read_only and resume_initial(pid) != thread["id"]:
+        return {"available": False, "reason": "changed"}
     return {"available": True, "binding": binding, "model": thread["model"],
-            "effort": thread["reasoning_effort"], **result}
+            "effort": thread["reasoning_effort"], "readOnly": read_only, **result}
 
 
 if __name__ == "__main__":

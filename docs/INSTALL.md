@@ -47,6 +47,8 @@ tmux -S /srv/codock/tmux/default.sock new-session -s dev -c /srv/codock/projects
 
 ## 3. 登录身份（二选一）
 
+Claude Code 用户还可设置 `claudeHome`（默认当前用户的 `.claude`）。语音不是必装项，需要时按[语音配置](VOICE.md)安装，不影响普通聊天与预览。
+
 **GitHub**：Settings → Developer settings → OAuth Apps → New OAuth App。Homepage 填 `origin`，回调填 `origin/auth/github/callback`；不启用通配回调或 Device Flow。访问 `https://api.github.com/users/YOUR_LOGIN`，将自己的 `login` 和数字 `id` 写入 `githubOwner`，然后运行 `npm run setup:github`，隐藏输入 Client ID / secret。示例 ID `0` 故意不能启动。不申请仓库权限，工作机须能访问 GitHub。[官方流程](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)
 
 **密码＋TOTP**：`authMode` 改为 `local`，运行 `npm run setup`，设置 16–256 字符密码，按提示在验证器中添加密钥并确认动态码。保存密钥，不分享截图。两种模式互斥，不会自动降级。

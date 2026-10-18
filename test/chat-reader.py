@@ -12,6 +12,7 @@ reader = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(reader)
 THREAD = "11111111-1111-1111-1111-111111111111"
 CHILD = "22222222-2222-2222-2222-222222222222"
+ORPHAN = "33333333-3333-3333-3333-333333333333"
 
 
 class ReaderTest(unittest.TestCase):
@@ -48,6 +49,13 @@ class ReaderTest(unittest.TestCase):
             db.execute("UPDATE thread_items SET updated_at_ordinal=100,item_json=? WHERE thread_id=? AND rollout_ordinal=44", (json.dumps({"type":"agentMessage","phase":"final_answer","text":"updated"}),THREAD))
         self.assertNotEqual(reader.read_history(self.home, THREAD)["revision"], first["revision"])
 
+    def test_route_derived_preview_target_is_hidden_from_user_bubble(self):
+        text = "【当前网页会话 data；预览目标 data；不要用工具进程的 TMUX/TMUX_PANE 判断】\n把结果放在这个会话"
+        row = {"rollout_ordinal": 123, "created_at_ms": 123000, "item_json": json.dumps({"type": "userMessage", "content": [{"type": "text", "text": text}]}), "item_type": "userMessage"}
+        self.assertEqual(reader.visible(row)["text"], "把结果放在这个会话")
+        row["item_json"] = json.dumps({"type": "userMessage", "content": [{"type": "text", "text": text.replace("预览目标 data", "预览目标 paper")}]})
+        self.assertEqual(reader.visible(row)["text"], text.replace("预览目标 data", "预览目标 paper"), "不匹配的标记不可隐藏")
+
     def test_mapping_is_root_cli_and_bound_to_process(self):
         request = {"home":str(self.home),"pid":123}
         with patch.object(reader, "locate", return_value=(456,"789",{THREAD,CHILD})):
@@ -58,6 +66,116 @@ class ReaderTest(unittest.TestCase):
             self.assertEqual(result["reason"], "changed")
         with patch.object(reader, "locate", side_effect=[(456,"789",{THREAD}),(457,"790",{THREAD})]):
             self.assertEqual(reader.main(request)["reason"], "changed")
+
+    def test_identity_only_never_parses_history_and_still_rechecks_the_process(self):
+        request = {"home":str(self.home),"pid":123,"identityOnly":True}
+        with patch.object(reader,"read_history",side_effect=AssertionError("identity lookup must not parse history")), patch.object(reader,"read_legacy",side_effect=AssertionError("identity lookup must not parse rollout")):
+            with patch.object(reader,"locate",return_value=(456,"789",{THREAD})):
+                result=reader.main(request)
+                self.assertTrue(result["available"])
+                self.assertFalse(result["readOnly"])
+                self.assertNotIn("messages",result)
+            with patch.object(reader,"locate",return_value=(456,"789",set())), patch.object(reader,"resume_hint",return_value=None), patch.object(reader,"resume_initial",return_value=THREAD):
+                self.assertTrue(reader.main(request)["readOnly"])
+            with patch.object(reader,"locate",side_effect=[(456,"789",{THREAD}),(457,"790",{THREAD})]):
+                self.assertEqual(reader.main(request)["reason"],"changed")
+
+    def test_runtime_batch_reports_only_latest_verified_completed_final(self):
+        with sqlite3.connect(self.home / "thread_history_1.sqlite") as db:
+            db.execute("ALTER TABLE thread_items ADD COLUMN turn_id TEXT")
+            db.execute("ALTER TABLE thread_items ADD COLUMN item_id TEXT")
+            db.execute("UPDATE thread_items SET turn_id='done',item_id='final' WHERE thread_id=? AND rollout_ordinal=44", (THREAD,))
+            db.execute("CREATE TABLE thread_turns (thread_id TEXT,turn_id TEXT,rollout_ordinal INTEGER,status TEXT,completed_at INTEGER,final_agent_item_id TEXT)")
+            db.executemany("INSERT INTO thread_turns VALUES (?,?,?,?,?,?)",[(THREAD,"done",44,"completed",1790532000,"final"),(THREAD,"now",50,"inProgress",None,None)])
+        request={"home":str(self.home),"pid":123,"pane":"%15","socket":"/workspace/tmux.sock","runtimeOnly":True}
+        with patch.object(reader,"locate",return_value=(456,"789",{THREAD})):
+            result=reader.main(request)
+            batch=reader.main({"home":str(self.home),"runtimeBatch":[request]})
+        self.assertEqual(result["completion"],{"id":"44","time":1790532000000})
+        self.assertNotIn("messages",result)
+        self.assertEqual(batch["completions"],[{"binding":f"456:789:{THREAD}","id":"44","time":1790532000000}])
+        self.assertNotIn("reply 44",json.dumps(batch))
+        with patch.object(reader,"locate",return_value=(456,"789",set())),patch.object(reader,"resume_hint",return_value=None),patch.object(reader,"resume_initial",return_value=None):
+            self.assertEqual(reader.main(request)["reason"],"unverified_codex")
+        with self.assertRaises(ValueError): reader.main({"home":str(self.home),"runtimeBatch":[request]*33})
+
+    def test_unregistered_writer_locks_use_only_verified_visible_resume(self):
+        request = {"home":str(self.home),"pid":123,"pane":"%15","socket":"/workspace/tmux.sock"}
+        locks = {CHILD, ORPHAN}
+        with patch.object(reader,"locate",return_value=(456,"789",locks)), patch.object(reader,"resume_hint",return_value=THREAD):
+            result=reader.main(request)
+            self.assertTrue(result["available"])
+            self.assertEqual(result["binding"],f"456:789:{THREAD}")
+        with patch.object(reader,"locate",return_value=(456,"789",locks)), patch.object(reader,"resume_hint",return_value=None), patch.object(reader,"resume_initial",return_value=None):
+            self.assertEqual(reader.main(request)["reason"],"unverified_codex")
+        with patch.object(reader,"locate",return_value=(456,"789",locks)), patch.object(reader,"resume_hint",side_effect=[THREAD,None]):
+            self.assertEqual(reader.main(request)["reason"],"changed")
+
+    def test_resume_hint_requires_the_same_cli_thread_on_current_screen(self):
+        argv=b"/path/codex\0resume\0"+THREAD.encode()+b"\0"
+        self.assertEqual(reader.resume_from_argv(argv),THREAD)
+        self.assertIsNone(reader.resume_from_argv(b"/path/codex\0exec\0"+THREAD.encode()+b"\0"))
+        screen="Welcome to Codex\nTo resume this session, run codex resume "+THREAD+"\n› "
+        self.assertEqual(reader.resume_from_ui(argv,screen),THREAD)
+        selection="To resume this session, run codex resume, then select the chat ("+THREAD+")"
+        self.assertEqual(reader.resume_from_ui(argv,selection),THREAD)
+        self.assertIsNone(reader.resume_from_ui(argv,screen.replace(THREAD,CHILD)))
+        self.assertIsNone(reader.resume_from_ui(argv,"› codex resume "+THREAD))
+        self.assertIsNone(reader.resume_from_ui(b"/path/codex\0exec\0"+THREAD.encode()+b"\0",screen))
+
+    def test_unverified_resumed_cli_can_only_show_saved_history(self):
+        request={"home":str(self.home),"pid":123,"pane":"%15","socket":"/workspace/tmux.sock"}
+        with patch.object(reader,"locate",return_value=(456,"789",set())), patch.object(reader,"resume_hint",return_value=None), patch.object(reader,"resume_initial",return_value=THREAD):
+            result=reader.main(request)
+        self.assertTrue(result["available"])
+        self.assertTrue(result["readOnly"])
+        self.assertEqual(result["binding"],f"456:789:{THREAD}")
+        self.assertEqual(result["messages"][-1]["id"],"45")
+        with patch.object(reader,"locate",return_value=(456,"789",set())), patch.object(reader,"resume_hint",return_value=None), patch.object(reader,"resume_initial",side_effect=[THREAD,None]):
+            self.assertEqual(reader.main(request)["reason"],"changed")
+
+    def test_native_metadata_proof_selects_current_cli_thread_without_daemon_lock(self):
+        request={"home":str(self.home),"pid":123,"verifiedThread":THREAD}
+        with patch.object(reader,"locate",return_value=(456,"789",set())), patch.object(reader,"resume_hint",return_value=None), patch.object(reader,"resume_initial",return_value=None):
+            result=reader.main(request)
+        self.assertTrue(result["available"])
+        self.assertFalse(result["readOnly"])
+        self.assertEqual(result["binding"],f"456:789:{THREAD}")
+        with patch.object(reader,"locate",return_value=(456,"789",set())), patch.object(reader,"resume_hint",return_value=None), patch.object(reader,"resume_initial",return_value=None):
+            self.assertEqual(reader.main({"home":str(self.home),"pid":123})["reason"],"unverified_codex")
+        with patch.object(reader,"locate",return_value=(456,"789",{THREAD})), patch.object(reader,"resume_hint",return_value=None):
+            self.assertEqual(reader.main({**request,"verifiedThread":CHILD})["reason"],"changed")
+
+    def test_vscode_origin_thread_resumed_by_cli_uses_only_fresh_metadata_proof(self):
+        sessions=self.home / "sessions"
+        sessions.mkdir()
+        rollout=sessions / "old-vscode.jsonl"
+        rollout.write_text("\n".join([
+            json.dumps({"type":"session_meta","payload":{"id":THREAD}}),
+            json.dumps({"type":"event_msg","timestamp":"2026-09-26T00:00:00Z","payload":{"type":"user_message","message":"saved request"}}),
+        ])+"\n")
+        with sqlite3.connect(self.home / "state_5.sqlite") as db:
+            db.execute("UPDATE threads SET source='vscode',history_mode='legacy',rollout_path=? WHERE id=?",(str(rollout),THREAD))
+        request={"home":str(self.home),"pid":123,"pane":"%15","socket":"/workspace/tmux.sock"}
+        with patch.object(reader,"locate",return_value=(456,"789",set())), patch.object(reader,"resume_hint",return_value=None), patch.object(reader,"resume_initial",return_value=THREAD):
+            self.assertEqual(reader.main(request)["reason"],"unverified_codex")
+            result=reader.main({**request,"verifiedThread":THREAD})
+        self.assertTrue(result["available"])
+        self.assertFalse(result["readOnly"])
+        self.assertEqual(result["binding"],f"456:789:{THREAD}")
+        self.assertEqual(result["messages"][0]["text"],"saved request")
+
+    def test_legacy_reverse_page_skips_a_tool_record_larger_than_one_window(self):
+        sessions=self.home / "sessions"
+        sessions.mkdir()
+        rollout=sessions / "large-tail.jsonl"
+        with rollout.open("w") as file:
+            file.write(json.dumps({"type":"session_meta","payload":{"id":THREAD}})+"\n")
+            file.write(json.dumps({"type":"event_msg","timestamp":"2026-09-26T00:00:00Z","payload":{"type":"user_message","message":"before giant output"}})+"\n")
+            file.write(json.dumps({"type":"response_item","timestamp":"2026-09-26T00:00:01Z","payload":{"type":"function_call_output","output":"X"*(9*1024*1024)}})+"\n")
+        result=reader.read_legacy(self.home,THREAD,str(rollout))
+        self.assertEqual([m["text"] for m in result["messages"]],["before giant output"])
+        self.assertIn("略过",result["notice"])
 
     def test_receipt_lookup_uses_exact_public_user_text_and_time_beyond_first_page(self):
         self.assertFalse(any(m.get("text") == "message 1" for m in reader.read_history(self.home, THREAD)["messages"]))

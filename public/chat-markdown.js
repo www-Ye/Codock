@@ -1,4 +1,4 @@
-// Safe DOM-only Markdown renderer shared by chat and documentation pages.
+// Safe DOM-only Markdown renderer reused from the existing Xiaoya UI.
 function appendInlineMarkdown(parent, source) {
   const text = String(source || "");
   const pattern = /(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\*\*([^*\n]+)\*\*|`([^`\n]+)`)/g;

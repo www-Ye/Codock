@@ -71,12 +71,12 @@ test("port preview streams HTML readiness, preserves media ranges and reports up
     });
   const html = await req("/");
   assert.match(html.text, /^<!doctype html>/);
-  assert.match(html.text, /workbench-preview-ready/);
+  assert.match(html.text, /duck-preview-ready/);
   assert.equal(html.headers["content-length"], undefined);
   assert.equal(html.headers["cache-control"], "no-store");
   const error = await req("/error");
   assert.equal(error.status, 500);
-  assert.match(error.text, /workbench-preview-error/);
+  assert.match(error.text, /duck-preview-error/);
   const video = await req("/video", { headers: { Range: "bytes=2-5" } });
   assert.equal(video.text, "2345");
   assert.equal(video.status, 206);
@@ -84,12 +84,12 @@ test("port preview streams HTML readiness, preserves media ranges and reports up
   assert.equal((await req("/", { method: "HEAD" })).text, "");
   const jump = await req("/jump");
   assert.equal(jump.status, 502);
-  assert.match(jump.text, /workbench-preview-error/);
+  assert.match(jump.text, /duck-preview-error/);
   assert.equal(jump.headers.location, undefined);
   await new Promise((r) => upstream.close(r));
   const down = await req("/");
   assert.equal(down.status, 502);
-  assert.match(down.text, /workbench-preview-error/);
+  assert.match(down.text, /duck-preview-error/);
 });
 function request(port, host, path, { method = "GET", cookie, body, origin, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
@@ -349,7 +349,7 @@ test(
     const page = await request(port, u.host, "/index.html", { cookie: pc });
     assert.equal(page.status, 200);
     assert.match(page.headers["content-security-policy"], /sandbox/);
-    assert.match(page.text, /workbench-preview-ready/);
+    assert.match(page.text, /duck-preview-ready/);
     assert.match(page.headers["cache-control"], /private, no-cache/);
     const conditional = { headers: { "If-None-Match": page.headers.etag } };
     assert.equal(
@@ -391,7 +391,7 @@ test(
     );
     const missing = await request(port, u.host, "/missing.html", { cookie: pc });
     assert.equal(missing.status, 404);
-    assert.match(missing.text, /workbench-preview-error/);
+    assert.match(missing.text, /duck-preview-error/);
     assert.equal(missing.headers["cache-control"], "no-store");
     assert.equal((await request(port, u.host, "/leak.txt", { cookie: pc })).status, 403);
     assert.equal((await request(port, u.host, "/.env", { cookie: pc })).status, 403);

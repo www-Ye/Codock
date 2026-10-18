@@ -26,7 +26,7 @@ Main endpoints: `/api/bootstrap`, `/api/sessions`, `/api/sessions/:name/chat`, `
 
 The history adapter currently reads `state_5.sqlite`, `thread_history_1.sqlite` and associated legacy JSONL. These are not a stable public SDK. Synthetic tests do not establish compatibility with every Codex version; check thread detection, history, activity, input and approvals before upgrading. Unsupported formats fall back to the terminal rather than guessing a thread or scanning other users.
 
-No official App Server integration, cross-user authorization, complete audit recording or server-side speech recognition. Changing the frontend does not change the model or Codex safety settings. Only supported public conversation/activity is exposed, not private reasoning.
+When available, local Codex App Server metadata confirms thread identity and quota without starting another model task. Claude Code reads the matching user's session files. `chat-interaction.mjs` handles questions, `session-runtime.mjs` aggregates activity, `system-status.mjs` reads machine load, and `voice-asr.mjs` provides optional CPU dictation. Cross-user authorization and complete audit recording remain out of scope. Only public conversation/activity is exposed, not private reasoning.
 
 ## State
 

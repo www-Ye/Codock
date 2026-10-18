@@ -8,6 +8,7 @@
   "authMode": "github",
   "githubOwner": { "login": "REPLACE-ME", "id": 0 },
   "codexHome": "/srv/codock/.codex",
+  "claudeHome": "/srv/codock/.claude",
   "chatEnabled": true,
   "previewPorts": [],
   "brand": {

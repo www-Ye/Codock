@@ -107,11 +107,11 @@ test(
       404,
     );
     const browser = await chromium.launchPersistentContext(dir + "/profile", {
-      executablePath: process.env.DESK_CHROMIUM,
+      executablePath: process.env.CHROME_BIN || chromium.executablePath(),
       headless: true,
       viewport: { width: 390, height: 844 },
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      env: { ...process.env, TMPDIR: process.env.TMPDIR },
+      env: { ...process.env, TMPDIR: dir },
     });
     t.after(() => browser.close());
     const [name, value] = cookie.split("=");

@@ -1,6 +1,9 @@
+let chatEnabled = true;
+window.addEventListener("codock-theme", () => {
+  if (terminal) terminal.options.theme = window.CodockTheme.terminal();
+});
 const $ = (s) => document.querySelector(s),
   all = (s) => [...document.querySelectorAll(s)];
-let chatEnabled = true;
 let sessions = [],
   current = null,
   terminal = null,
@@ -14,9 +17,6 @@ let connectionReady = false,
   writeWaiter = null,
   fontSize = 13,
   followOutput = true;
-window.addEventListener("codock-theme", () => {
-  if (terminal) terminal.options.theme = window.CodockTheme.terminal();
-});
 const inputConsent = new Set();
 let terminalScriptPromise = null,
   terminalLoading = false;
@@ -221,15 +221,11 @@ async function api(route, options = {}) {
     try {
       body = await r.json();
     } catch {
-      throw Object.assign(Error("连接返回异常，请稍后重试"), {
-        status: r.status,
-      });
+      throw Object.assign(Error("连接返回异常，请稍后重试"), { status: r.status });
     }
     if (!r.ok) {
       if (r.status === 401 && route !== "/api/login") showLogin();
-      throw Object.assign(Error(body.error || "请求失败"), {
-        status: r.status,
-      });
+      throw Object.assign(Error(body.error || "请求失败"), { status: r.status });
     }
     return body;
   } catch (e) {
@@ -241,6 +237,154 @@ async function api(route, options = {}) {
 function post(route, body = {}) {
   return api(route, { method: "POST", body: JSON.stringify(body) });
 }
+// Account-wide quota, independent from chat polling and terminal input.
+const quotaMenu = document.createElement("details");
+quotaMenu.id = "quotaMenu";
+const quotaSummary = document.createElement("summary");
+quotaSummary.textContent = "额度";
+quotaSummary.setAttribute("aria-label", "查看 Codex 账号剩余额度");
+const quotaPanel = document.createElement("section");
+quotaPanel.className = "quota-panel";
+quotaPanel.setAttribute("aria-label", "Codex 账号额度");
+const quotaTitle = document.createElement("h2");
+quotaTitle.textContent = "Codex 剩余额度";
+const quotaNote = document.createElement("p");
+quotaNote.className = "micro";
+quotaNote.textContent = "本机 Codex 登录账号共用，不是上下文剩余。";
+const quotaRows = document.createElement("div"),
+  quotaTime = document.createElement("p");
+quotaTime.className = "micro";
+quotaTime.textContent = "尚未读取";
+const quotaRefresh = document.createElement("button");
+quotaRefresh.className = "quiet";
+quotaRefresh.textContent = "刷新额度";
+quotaPanel.append(quotaTitle, quotaNote, quotaRows, quotaTime, quotaRefresh);
+quotaMenu.append(quotaSummary, quotaPanel);
+$("#deskMenu").before(quotaMenu);
+let quotaPending = false,
+  quotaChecked = 0;
+function quotaDuration(mins) {
+  return mins % 1440 === 0
+    ? `${mins / 1440} 天`
+    : mins % 60 === 0
+      ? `${mins / 60} 小时`
+      : `${mins} 分钟`;
+}
+function renderQuota(value) {
+  quotaRows.replaceChildren();
+  const buckets = value.buckets || [],
+    main = buckets.find((b) => b.id === "codex") || buckets[0];
+  const expired = (w) => w.resetsAt && w.resetsAt <= Date.now();
+  const first = main?.windows[0];
+  quotaSummary.textContent =
+    first && !value.stale && !expired(first) ? `${first.remainingPercent}%` : "额度";
+  quotaSummary.title = first
+    ? `Codex ${quotaDuration(first.durationMins)}剩余 ${first.remainingPercent}%${value.stale ? "（上次数据）" : ""}`
+    : "查看 Codex 账号剩余额度";
+  quotaSummary.setAttribute("aria-label", quotaSummary.title);
+  for (const bucket of buckets) {
+    const name = document.createElement("h3");
+    name.textContent = bucket.name === "codex" ? "Codex" : bucket.name;
+    quotaRows.append(name);
+    for (const w of bucket.windows) {
+      const row = document.createElement("div");
+      row.className = "quota-row";
+      const label = document.createElement("span");
+      label.textContent = quotaDuration(w.durationMins);
+      const percent = document.createElement("strong");
+      percent.textContent = `剩余 ${w.remainingPercent}%${value.stale || expired(w) ? " · 上次数据" : ""}`;
+      const meter = document.createElement("progress");
+      meter.max = 100;
+      meter.value = w.remainingPercent;
+      meter.setAttribute("aria-label", `${label.textContent}剩余额度`);
+      const reset = document.createElement("small");
+      reset.textContent = expired(w)
+        ? "重置时间已过，等待更新"
+        : w.resetsAt
+          ? `重置于 ${new Date(w.resetsAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}`
+          : "重置时间未知";
+      row.append(label, percent, meter, reset);
+      quotaRows.append(row);
+    }
+  }
+  quotaTime.textContent = value.stale
+    ? "暂时读取失败" + (buckets.length ? "，以上为上次数据。" : "，稍后重试。")
+    : !value.available
+      ? "当前账号未返回额度，可能不支持或未登录。"
+      : `更新于 ${new Date(value.checkedAt).toLocaleTimeString("zh-CN")} · 每分钟更新`;
+}
+async function refreshQuota(manual = false) {
+  if (
+    quotaPending ||
+    document.hidden ||
+    $("#app").classList.contains("hidden") ||
+    (!manual && Date.now() - quotaChecked < 60000)
+  )
+    return;
+  quotaPending = true;
+  quotaRefresh.disabled = true;
+  try {
+    renderQuota(await api("/api/account/quota", { signal: AbortSignal.timeout(8000) }));
+    quotaChecked = Date.now();
+  } catch {
+    quotaSummary.textContent = "额度";
+    quotaTime.textContent = "暂时无法更新额度，请稍后重试。";
+    quotaRows.replaceChildren();
+  } finally {
+    quotaPending = false;
+    quotaRefresh.disabled = false;
+  }
+}
+quotaRefresh.onclick = () => void refreshQuota(true);
+quotaMenu.addEventListener("toggle", () => {
+  if (quotaMenu.open) {
+    $("#deskMenu").open = false;
+    void refreshQuota();
+  }
+});
+document.addEventListener("pointerdown", (event) => {
+  if (!quotaMenu.contains(event.target)) quotaMenu.open = false;
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && quotaMenu.open) {
+    quotaMenu.open = false;
+    quotaSummary.focus();
+  }
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) void refreshQuota();
+});
+setInterval(() => void refreshQuota(), 60000);
+// Reading a foreground preview is activity, even without terminal input.
+// Never mint a login, renew preview tickets or reload project HTML here.
+let previewActivityPending = false,
+  previewActivityAt = 0;
+async function keepPreviewSession() {
+  if (
+    document.hidden ||
+    !document.hasFocus() ||
+    !navigator.onLine ||
+    !current?.preview ||
+    $("#app").classList.contains("hidden") ||
+    $("#previewPanel").classList.contains("hidden") ||
+    previewActivityPending ||
+    Date.now() - previewActivityAt < 60000
+  )
+    return;
+  previewActivityPending = true;
+  previewActivityAt = Date.now();
+  try {
+    await post("/api/activity");
+  } catch {
+    /* A real 401 is handled by api(); network failures leave the page intact. */
+  } finally {
+    previewActivityPending = false;
+  }
+}
+setInterval(() => void keepPreviewSession(), 60000);
+window.addEventListener("focus", () => void keepPreviewSession());
+window.addEventListener("online", () => void keepPreviewSession());
+document.addEventListener("visibilitychange", () => void keepPreviewSession());
 const previewView = new DeskPreview({
   request: (item, signal) =>
     api("/api/sessions/" + item.name + "/preview", {
@@ -251,8 +395,11 @@ const previewView = new DeskPreview({
   notify: toast,
 });
 const chatView = new DeskChat({
-  request: (item, query, signal) =>
-    api("/api/sessions/" + item.name + "/chat?" + query, { signal }),
+  request: async (item, query, signal) => {
+    const result = await api("/api/sessions/" + item.name + "/chat?" + query, { signal });
+    if (!query.has("before")) observeSavedFinal(item, result);
+    return result;
+  },
   send: (item, body) =>
     api("/api/sessions/" + item.name + "/chat", {
       method: "POST",
@@ -260,14 +407,279 @@ const chatView = new DeskChat({
       signal: AbortSignal.timeout(20000),
     }),
   receipt: (item, id) => api("/api/sessions/" + item.name + "/chat/receipts/" + id),
+  recover: (item, id, body) =>
+    api("/api/sessions/" + item.name + "/chat/receipts/" + id, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  release: (item, id, body) =>
+    api("/api/sessions/" + item.name + "/chat/receipts/" + id, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   dismiss: (item, id, body) =>
     api("/api/sessions/" + item.name + "/chat/receipts/" + id, {
       method: "DELETE",
       body: JSON.stringify(body),
     }),
-  onRuntime: (item, value) => sessionView.setRuntime(item, value),
+  readQuestion: (item, binding) =>
+    api(
+      "/api/sessions/" +
+        item.name +
+        "/interaction?" +
+        new URLSearchParams({ identity: item.identity, binding }),
+    ),
+  submitQuestion: (item, binding, token, index) =>
+    api("/api/sessions/" + item.name + "/interaction", {
+      method: "POST",
+      body: JSON.stringify({ identity: item.identity, binding, token, index, confirm: true }),
+    }),
+  voiceStatus: () => api("/api/voice/status"),
+  prepareVoice: (language, signal) =>
+    api("/api/voice/prepare", {
+      method: "POST",
+      body: JSON.stringify({ language }),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(12000)]),
+    }),
+  transcribe: (body, signal, preview = false) =>
+    api("/api/voice/transcribe", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(preview ? 12000 : 30000)]),
+    }),
+  onRuntime: (item, value) => {
+    sessionView.setRuntime(item, value);
+    observeCompletion(item, value.state, value.checkedAt);
+  },
 });
 const sessionView = new DeskSessions();
+const completionStates = new Map();
+const seenFinals = new Map(),
+  seenBatchFinals = new Map(),
+  notifiedFinals = new Map();
+function latestFinal(result) {
+  return (
+    result.available &&
+    result.messages?.findLast(
+      (message) =>
+        message.role === "assistant" && ["final_answer", "final"].includes(message.phase),
+    )
+  );
+}
+function vibrateOnce(key, marker) {
+  if (notifiedFinals.get(key) === marker) return;
+  notifiedFinals.set(key, marker);
+  if (document.hidden || navigator.userActivation?.hasBeenActive === false) return;
+  try {
+    navigator.vibrate?.([180, 80, 180]);
+  } catch {}
+}
+function observeSavedFinal(item, result) {
+  if (!item?.identity || !result.available || result.unchanged || !result.binding) return;
+  const key = item.name + ":" + item.identity,
+    final = latestFinal(result),
+    id = final ? String(final.id) : null;
+  const previous = seenFinals.get(key),
+    observedAt = Number.isFinite(result.runtime?.checkedAt) ? result.runtime.checkedAt : Date.now();
+  if (!previous || previous.binding !== result.binding) {
+    seenFinals.set(key, { binding: result.binding, id, observedAt });
+    return;
+  }
+  if (final && id !== previous.id) {
+    seenFinals.set(key, { binding: result.binding, id, observedAt });
+    if (Number(final.time) >= previous.observedAt - 30000)
+      vibrateOnce(key, result.binding + ":" + id);
+  }
+}
+function observeBatchFinal(item, marker, observedAt, active) {
+  if (
+    !item?.identity ||
+    marker?.identity !== item.identity ||
+    typeof marker.binding !== "string" ||
+    typeof marker.id !== "string" ||
+    !Number.isFinite(marker.time)
+  )
+    return;
+  const key = item.name + ":" + item.identity,
+    previous = seenBatchFinals.get(key);
+  if (!previous || previous.binding !== marker.binding) {
+    seenBatchFinals.set(key, { binding: marker.binding, id: marker.id, observedAt });
+    return;
+  }
+  if (marker.id !== previous.id) {
+    seenBatchFinals.set(key, { binding: marker.binding, id: marker.id, observedAt });
+    if (!active && marker.time >= previous.observedAt - 30000)
+      vibrateOnce(key, marker.binding + ":" + marker.id);
+  }
+}
+function observeCompletion(item, state, checkedAt) {
+  if (!item?.identity || !["running", "waiting", "ready"].includes(state)) return;
+  const key = item.name + ":" + item.identity,
+    previous = completionStates.get(key);
+  if (state === "running") {
+    if (previous?.state !== "running")
+      completionStates.set(key, {
+        state,
+        since: Number.isFinite(checkedAt) ? checkedAt : Date.now(),
+        baseline: seenFinals.get(key),
+      });
+    return;
+  }
+  if (state === "waiting") {
+    completionStates.set(key, { state });
+    return;
+  }
+  if (previous?.state === "running") {
+    const token = Symbol("completion");
+    completionStates.set(key, { state: "checking", token });
+    void verifyCompletion(item, key, previous.since, previous.baseline, token);
+  } else if (previous?.state !== "checking") completionStates.set(key, { state });
+}
+async function verifyCompletion(item, key, since, baseline, token) {
+  for (let attempt = 0; attempt < 5 && completionStates.get(key)?.token === token; attempt++) {
+    try {
+      const result = await api(
+        "/api/sessions/" + item.name + "/chat?" + new URLSearchParams({ identity: item.identity }),
+        { signal: AbortSignal.timeout(9000) },
+      );
+      const final = latestFinal(result);
+      const sameBinding = baseline?.binding === result.binding;
+      const fresh =
+        final &&
+        Number(final.time) >= since - (sameBinding ? 30000 : 2000) &&
+        (!sameBinding || String(final.id) !== baseline.id);
+      if (fresh) {
+        seenFinals.set(key, {
+          binding: result.binding,
+          id: String(final.id),
+          observedAt: Date.now(),
+        });
+        if (completionStates.get(key)?.token === token)
+          vibrateOnce(key, result.binding + ":" + final.id);
+        break;
+      }
+    } catch {
+      /* A missing reader or transient network error must not create a false completion. */
+    }
+    if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 2500));
+  }
+  if (completionStates.get(key)?.token === token) completionStates.set(key, { state: "ready" });
+}
+let runtimePending = false,
+  runtimeLastGoodAt = 0;
+function activeChatName() {
+  return current &&
+    chatView.active &&
+    chatView.item?.name === current.name &&
+    chatView.item.identity === current.identity
+    ? current.name
+    : null;
+}
+async function refreshRuntime() {
+  if (runtimePending || document.hidden || $("#app").classList.contains("hidden")) return;
+  runtimePending = true;
+  try {
+    const value = await api("/api/sessions/runtime", { signal: AbortSignal.timeout(12000) });
+    if (value.states && Number.isFinite(value.checkedAt)) {
+      const active = activeChatName(),
+        state = active && value.states[active];
+      if (
+        ["ready", "running", "waiting"].includes(state) &&
+        (chatView.runBadge.dataset.state === "unknown" ||
+          Date.now() - chatView.runtimeObservedAt > 8000)
+      )
+        chatView.runtime({ state, source: "terminal-hint", checkedAt: value.checkedAt });
+      sessionView.setRuntimes(value.states, { preserve: active });
+      runtimeLastGoodAt = Date.now();
+      for (const item of sessions)
+        if (item.state === "online") {
+          if (value.completions?.[item.name])
+            observeBatchFinal(
+              item,
+              value.completions[item.name],
+              value.checkedAt,
+              item.name === active,
+            );
+          if (item.name !== active)
+            observeCompletion(item, value.states[item.name], value.checkedAt);
+        }
+    }
+  } catch {
+    /* A transient status failure must not block chat or navigation. */
+  } finally {
+    if (Date.now() - runtimeLastGoodAt > 15000)
+      sessionView.setRuntimes({}, { preserve: activeChatName() });
+    runtimePending = false;
+  }
+}
+sessionView.onOpen = () => void refreshRuntime();
+setInterval(() => void refreshRuntime(), 6000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) void refreshRuntime();
+});
+let systemPending = false;
+async function refreshSystem() {
+  if (
+    systemPending ||
+    document.hidden ||
+    $("#app").classList.contains("hidden") ||
+    $("#home").classList.contains("hidden")
+  )
+    return;
+  systemPending = true;
+  try {
+    const value = await api("/api/system", { signal: AbortSignal.timeout(7000) });
+    const show = (label, number, bar) => {
+      $(label).textContent = number == null ? "—" : number + "%";
+      $(bar).style.width = (number == null ? 0 : Math.max(0, Math.min(100, number))) + "%";
+    };
+    show("#systemCpu", value.cpuPercent, "#systemCpuBar");
+    show("#systemMemory", value.memory?.percent, "#systemMemoryBar");
+    $("#systemMemoryDetail").textContent = value.memory
+      ? `${value.memory.usedMiB} / ${value.memory.totalMiB} MiB`
+      : "";
+    $("#systemTime").textContent =
+      "主机状态 · 更新于 " +
+      new Date(value.checkedAt).toLocaleTimeString("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+    const group = $("#systemGpus");
+    group.replaceChildren();
+    if (value.gpus?.length)
+      for (const gpu of value.gpus) {
+        const card = document.createElement("article"),
+          label = document.createElement("span"),
+          rate = document.createElement("strong"),
+          detail = document.createElement("small"),
+          track = document.createElement("i"),
+          fill = document.createElement("b");
+        card.className = "system-meter";
+        label.textContent = `GPU ${gpu.index} · ${gpu.name}`;
+        rate.textContent = gpu.utilization + "%";
+        detail.textContent = `显存 ${gpu.usedMiB} / ${gpu.totalMiB} MiB · ${gpu.temperatureC}°C`;
+        fill.style.width = Math.max(0, Math.min(100, gpu.memoryPercent)) + "%";
+        track.append(fill);
+        card.append(label, rate, detail, track);
+        group.append(card);
+      }
+    else {
+      const note = document.createElement("p");
+      note.className = "micro";
+      note.textContent = value.gpuAvailable ? "没有检测到 NVIDIA GPU" : "GPU 状态暂时不可用";
+      group.append(note);
+    }
+  } catch {
+    $("#systemTime").textContent = "状态暂时不可用，稍后重试";
+  } finally {
+    systemPending = false;
+  }
+}
+setInterval(() => void refreshSystem(), 10000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) void refreshSystem();
+});
 function stopTerminal() {
   dismissChatControls();
   terminalLoading = false;
@@ -286,6 +698,10 @@ function stopTerminal() {
 function showLogin() {
   stopTerminal();
   chatView.reset();
+  completionStates.clear();
+  seenFinals.clear();
+  seenBatchFinals.clear();
+  notifiedFinals.clear();
   document.body.classList.remove("terminal-mode", "chat-mode", "workspace-mode");
   $("#app").classList.add("hidden");
   $("#login").classList.remove("hidden");
@@ -318,6 +734,8 @@ async function refresh() {
     renderWorkspace();
   }
   sessionView.update(sessions, current);
+  void refreshRuntime();
+  void refreshQuota();
 }
 function renderCards() {
   const filter = $("#search").value.trim().toLowerCase();
@@ -378,8 +796,9 @@ async function route() {
   chatView.clear();
   previewView.reset();
   const name = location.pathname.match(/^\/s\/([a-z0-9_-]+)$/)?.[1];
+  sessions.sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0));
   current = sessions.find((s) => s.name === name) || null;
-  sessionView.select(current);
+  sessionView.update(sessions, current);
   sessionView.navigated();
   document.body.classList.remove("terminal-mode", "chat-mode", "workspace-mode");
   $("#home").classList.toggle("hidden", Boolean(current));
@@ -402,7 +821,12 @@ async function route() {
       .catch(() => {
         /* Ranking must never block a conversation or resend input. */
       });
-  } else renderCards();
+  } else {
+    renderCards();
+    void refreshSystem();
+    if (location.hash === "#system")
+      requestAnimationFrame(() => $("#system").scrollIntoView({ block: "start" }));
+  }
 }
 function tab(name) {
   if (name === "chat" && !chatEnabled) name = "terminal";
@@ -549,6 +973,7 @@ window.onpopstate = () => void route();
 // One live terminal surface, temporarily displayed over the conversation.
 // Opening/closing never sends keys; no pending key is replayed on connection.
 const terminalHome = document.createComment("terminal-home");
+let modelOpening = false;
 $("#terminalPanel").before(terminalHome);
 function dismissChatControls() {
   const dialog = $("#chatControls");
@@ -556,45 +981,124 @@ function dismissChatControls() {
   dialog.close();
   terminalHome.after($("#terminalPanel"));
   $("#terminalPanel").classList.add("hidden");
-  $("#chatTerminal").setAttribute("aria-expanded", "false");
+  $("#chatModel").setAttribute("aria-expanded", "false");
 }
-function openChatControls(interrupt = false) {
+function openChatControls(interrupt = false, model = false) {
   if (!current || $("#chatPanel").classList.contains("hidden")) return;
   chatView.voice.close();
   const dialog = $("#chatControls");
-  $("#chatControlsTitle").textContent = current.label + " · 现场操作";
+  $("#chatControlsTitle").textContent = current.label + (model ? " · 切换模型" : " · 现场操作");
   $("#chatControlHint").textContent = interrupt
     ? "先确认下方现场，再点「中断本轮」。只发送一次 Esc，不强制结束进程。"
-    : "这里是原终端的实时画面。按题目提示选择或输入，回答后点「回到聊天」。";
+    : model
+      ? "正在打开原会话的模型菜单…"
+      : "这里是原终端的实时画面。按题目提示选择或输入，回答后点「回到聊天」。";
   if (!dialog.open) {
     $("#chatControlHost").append($("#terminalPanel"));
     $("#terminalPanel").classList.remove("hidden");
     dialog.showModal();
-    $("#chatTerminal").setAttribute("aria-expanded", "true");
+    $("#chatModel").setAttribute("aria-expanded", "true");
     void connect();
   }
   $("#chatControlsClose").focus();
 }
-$("#chatTerminal").onclick = () => openChatControls();
-$("#chatInterrupt").onclick = () => openChatControls(true);
+$("#chatModel").onclick = async () => {
+  if (modelOpening || !current || !chatView.key()) return;
+  const item = current,
+    binding = chatView.binding,
+    requestId = crypto.randomUUID();
+  modelOpening = true;
+  openChatControls(false, true);
+  $("#chatModel").disabled = true;
+  try {
+    const result = await api("/api/sessions/" + item.name + "/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        requestId,
+        identity: item.identity,
+        binding,
+        text: "/model",
+        confirm: true,
+        transport: "terminal-model",
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (current?.name === item.name && chatView.binding === binding && $("#chatControls").open)
+      $("#chatControlHint").textContent =
+        result.state === "submitted"
+          ? "模型菜单已打开。直接点下方选项，选择模型与推理强度。"
+          : result.state === "failed"
+            ? result.message
+            : "打开结果暂时无法确认，请看现场；不会自动重试。";
+  } catch (e) {
+    if (current?.name === item.name && chatView.binding === binding && $("#chatControls").open)
+      $("#chatControlHint").textContent = [400, 403, 409, 429].includes(e.status)
+        ? e.message
+        : "连接中断，无法确认菜单是否打开。请看现场；不会自动重试。";
+  } finally {
+    modelOpening = false;
+    $("#chatModel").disabled = !chatView.key();
+  }
+};
+$("#chatInterrupt").onclick = async () => {
+  if (!current || !chatView.key() || !chatView.verified) return;
+  if (chatView.runBadge.dataset.state !== "running") {
+    toast("当前没有确认中的运行任务；如需取消菜单，可打开终端。");
+    return;
+  }
+  if (!confirm("中断当前会话本轮工作？只发送一次 Esc，不会结束会话。")) return;
+  const item = current,
+    binding = chatView.binding,
+    button = $("#chatInterrupt");
+  button.disabled = true;
+  try {
+    const result = await api("/api/sessions/" + item.name + "/interaction/interrupt", {
+      method: "POST",
+      body: JSON.stringify({
+        identity: item.identity,
+        binding,
+        requestId: crypto.randomUUID(),
+        confirm: true,
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+    if (current?.name === item.name && chatView.binding === binding) toast(result.message);
+  } catch (error) {
+    if (current?.name === item.name && chatView.binding === binding)
+      toast(
+        [400, 403, 409, 429].includes(error.status)
+          ? error.message
+          : "中断结果暂时无法确认；请先看聊天状态，不要重复点击。",
+      );
+  } finally {
+    button.disabled = false;
+    if (chatView.active) void chatView.load();
+  }
+};
 $("#chatAttention").onclick = () => openChatControls();
 $("#chatControlsClose").onclick = () => {
   stopTerminal();
-  $("#chatTerminal").focus();
+  ($("#chatAttention").classList.contains("hidden")
+    ? $("#chatModel")
+    : $("#chatAttention")
+  ).focus();
 };
 $("#chatControls").addEventListener("cancel", (e) => {
   e.preventDefault();
   // Esc typed into xterm belongs to the original program, not the dialog.
   if (document.activeElement !== terminal?.textarea) {
     stopTerminal();
-    $("#chatTerminal").focus();
+    ($("#chatAttention").classList.contains("hidden")
+      ? $("#chatModel")
+      : $("#chatAttention")
+    ).focus();
   }
 });
 $("#chatStopTurn").onclick = () => {
   if (!connectionReady || operationBusy || historyVisible || composing) return;
   if (
     !confirm(
-      "向当前现场发送一次 Esc？Codex 运行中用于中断本轮；若正在显示菜单则会取消菜单。不会强制结束进程。",
+      "向当前现场发送一次 Esc？运行中用于中断本轮；若正在显示菜单则会取消菜单。不会强制结束进程。",
     )
   )
     return;
@@ -603,7 +1107,6 @@ $("#chatStopTurn").onclick = () => {
     note("已发送 Esc，请查看现场是否停止；不会自动重复发送。");
   });
 };
-$("#chatPreview").onclick = () => tab("preview");
 const deskMenu = $("#deskMenu");
 deskMenu.addEventListener("click", (event) => {
   if (event.target.closest(".desk-menu-items a,.desk-menu-items button")) deskMenu.open = false;
@@ -624,10 +1127,7 @@ $("#loginForm").onsubmit = async (e) => {
   $("#loginButton").disabled = true;
   $("#loginMessage").textContent = "正在验证…";
   try {
-    await post("/api/login", {
-      password: $("#password").value,
-      code: $("#code").value,
-    });
+    await post("/api/login", { password: $("#password").value, code: $("#code").value });
     $("#password").value = "";
     $("#code").value = "";
     $("#login").classList.add("hidden");
@@ -649,6 +1149,7 @@ $("#logout").onclick = async () => {
   }
 };
 $("#refresh").onclick = () => void refresh().catch((e) => toast(e.message));
+$("#systemRefresh").onclick = () => void refreshSystem();
 $("#search").oninput = renderCards;
 $("#searchToggle").onclick = () => {
   const show = $("#search").classList.contains("hidden");
@@ -1018,6 +1519,20 @@ $("#settingsForm").onsubmit = async (e) => {
     $("#settingsMessage").textContent = e.message;
   }
 };
+$("#testVibration").onclick = () => {
+  const status = $("#vibrationStatus");
+  if (typeof navigator.vibrate !== "function") {
+    status.textContent = "当前浏览器不支持网页振动。";
+    return;
+  }
+  try {
+    status.textContent = navigator.vibrate([180, 80, 180])
+      ? "已请求振动；若手机没有震动，请检查系统振动设置。"
+      : "浏览器未允许振动，请检查设置。";
+  } catch {
+    status.textContent = "浏览器未允许振动，请检查设置。";
+  }
+};
 $("#rebind").onclick = async () => {
   if (!confirm("原会话已变化。确认把此工作页重新绑定到当前同名会话？原预览绑定会清空。")) return;
   try {
@@ -1044,7 +1559,7 @@ document.addEventListener("visibilitychange", () => {
       .catch(() => {});
 });
 const githubErrors = {
-  wrong_account: "这个 GitHub 账号没有访问权限，请使用管理员授权的账号登录。",
+  wrong_account: "这个 GitHub 账号没有访问权限，请使用管理员绑定的账号登录。",
   expired: "登录确认已过期，请重新点击 GitHub 登录。",
   cancelled: "你取消了 GitHub 授权，可以重新尝试。",
   upstream: "服务器暂时未能完成 GitHub 登录，请重新点击登录。",
@@ -1080,12 +1595,14 @@ async function initialize() {
   bootstrapFailed = false;
   $("#retryConnection").classList.add("hidden");
   $("#githubLogin").disabled = true;
-  $("#loginMessage").textContent = "正在连接工作台…";
+  $("#loginMessage").textContent = "正在连接Codock…";
   try {
     let b;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         b = await api("/api/bootstrap");
+        chatEnabled = b.chatEnabled !== false;
+        document.querySelector('[data-tab="chat"]').classList.toggle("hidden", !chatEnabled);
         break;
       } catch (e) {
         if (attempt || (e.status && e.status < 500)) throw e;
@@ -1095,10 +1612,8 @@ async function initialize() {
     }
     $("#githubLogin").disabled = !b.methods.github;
     $("#githubLogin").classList.toggle("hidden", Boolean(b.methods.local));
-    chatEnabled = b.chatEnabled !== false;
-    document.querySelector('[data-tab="chat"]').classList.toggle("hidden", !chatEnabled);
     $("#githubNote").classList.toggle("hidden", Boolean(b.methods.local));
-    $("#githubNote").textContent = "仅限管理员授权的 GitHub 账号";
+    $("#githubNote").textContent = "仅限 " + b.githubOwner + " · 无需Codock动态验证码";
     $("#loginForm").classList.toggle("hidden", !b.methods.local);
     $("#loginButton").disabled = !b.methods.local;
     if (!b.authenticated) {

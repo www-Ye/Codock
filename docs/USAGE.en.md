@@ -6,11 +6,13 @@ English · [简体中文](USAGE.md)
 
 Sessions open in chat. Expand execution records or show conversation only. The sidebar supports pins and recency ordering on refresh; switching chats keeps rows in place. On mobile it collapses, with search on demand.
 
-The composer forwards text and Enter to the original Codex terminal. It does not start another model: model, reasoning effort, tools, network access and quotas belong to that process. Website authentication is separate from Codex authentication.
+The composer forwards text and Enter to the original Codex or Claude Code terminal. It does not start another model: model, reasoning effort, tools, network access and quotas belong to that process. Claude compaction bookkeeping is filtered from user messages. Website authentication is separate from model authentication.
 
-Running/waiting/ready indicators infer current terminal cues, not a complete model event stream. Open the live controls for approvals, directional choices or interruptions; nothing is auto-approved. The terminal starts read-only; explicitly enable input to send keys. Scroll history separately from the live view.
+The sidebar shows session activity. Answer recognized questions and interrupt work from chat; model selection opens the original program's controls. Unrecognized interactions remain available in the terminal with arrow and Shift+Left buttons. Nothing is auto-approved. Chats open at the bottom; reading older messages does not force scrolling back down.
 
-For uncertain sends, inspect the terminal before retrying. Removing a failed receipt only clears the UI, not submitted input or Codex history. Browser dictation depends on permissions and recognition-service access; the phone keyboard's dictation is an alternative.
+For uncertain sends, inspect the terminal before retrying. Dismissing a receipt does not retract input or delete model history. Tap or hold to dictate into a draft: [local voice setup](VOICE.en.md).
+
+The home page shows CPU, memory and available GPUs. Codex quota uses local metadata when available; missing data is not displayed as zero. Supported phones can vibrate when a new final reply is confirmed in the foreground; background/locked devices are not guaranteed. Settings includes a vibration test.
 
 ## Appearance
 

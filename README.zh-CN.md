@@ -36,6 +36,8 @@
 
 ## 开始
 
+已同步新版终端体验：Codex / Claude Code 聊天、聊天内答题与中断、会话运行状态、机器 CPU / 内存 / GPU、可用时的 Codex 剩余额度，以及预览刷新与会话错绑修复。语音支持轻点或按住说话，本地 CPU 识别后只填入草稿：[语音配置](docs/VOICE.md)。
+
 已有 Linux 工作机、Node.js 22+、tmux 3.4+、Python 3 和可用的 Codex，会话与应用使用同一非 root 用户。
 
 | 想怎么用                   | 跟着做                                           |

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { ChatSender } from "../lib/chat-send.mjs";
 
@@ -12,6 +12,57 @@ const message = () => ({
   text: "请继续原来的任务\n第二行",
   confirm: true,
   transport: "terminal-enter",
+});
+
+test("missing receipt recovery durably blocks a late original request, including restart", async () => {
+  const runtime = await mkdtemp(process.env.TMPDIR + "/recover-");
+  let calls = 0;
+  const chats = { page: async () => ({ available: true, binding }) },
+    input = message();
+  const sender = new ChatSender(chats, runtime, {
+    deliver: async () => {
+      calls++;
+      return { state: "submitted" };
+    },
+  });
+  assert.equal(typeof sender.recover, "function", "missing receipts need explicit safe recovery");
+  assert.equal((await sender.recover("sandbox", input.requestId, input)).state, "failed");
+  assert.equal((await sender.send("sandbox", input)).state, "failed");
+  const restarted = new ChatSender(chats, runtime, {
+    deliver: async () => {
+      calls++;
+    },
+  });
+  assert.equal((await restarted.send("sandbox", input)).state, "failed");
+  assert.equal(calls, 0);
+  assert.deepEqual(await sender.recent("sandbox", input.identity, binding), []);
+  await assert.rejects(
+    () => sender.recover("sandbox", input.requestId, { ...input, identity: "wrong" }),
+    { status: 404 },
+  );
+});
+
+test("recovery cannot cancel an active preflight or an already touched terminal", async () => {
+  const runtime = await mkdtemp(process.env.TMPDIR + "/race-");
+  let release,
+    calls = 0;
+  const chats = { page: () => new Promise((r) => (release = r)) },
+    input = message();
+  const sender = new ChatSender(chats, runtime, {
+    deliver: async () => {
+      calls++;
+      return { state: "unknown" };
+    },
+  });
+  assert.equal(typeof sender.recover, "function");
+  const sending = sender.send("sandbox", input);
+  while (!release) await new Promise((r) => setTimeout(r, 5));
+  await assert.rejects(() => sender.recover("sandbox", input.requestId, input), { status: 409 });
+  release({ available: true, binding });
+  await sending;
+  chats.page = async () => ({ available: true, binding, messages: [] });
+  assert.equal((await sender.recover("sandbox", input.requestId, input)).state, "unknown");
+  assert.equal(calls, 1);
 });
 
 test("original terminal bridge: only verified thread, exact text, durable dedupe and restart ambiguity", async () => {
@@ -88,6 +139,11 @@ test("terminal sender rejects unsupported identity, missing confirmation, contro
     },
   });
   await assert.rejects(() => sender.send("sandbox", message()), { status: 409 });
+  assert.equal(calls, 0);
+  sender.chats.page = async () => ({ available: true, readOnly: true, binding });
+  const unverified = message();
+  await assert.rejects(() => sender.send("sandbox", unverified), { status: 409 });
+  await assert.rejects(() => stat(sender.file(unverified.requestId)), { code: "ENOENT" });
   assert.equal(calls, 0);
   await assert.rejects(() => sender.send("sandbox", { ...message(), transport: undefined }), {
     status: 409,
@@ -199,4 +255,115 @@ test("unknown receipt reconciles from exact same-thread history without resendin
     JSON.parse(await readFile(sender.file(input.requestId), "utf8")).reconciledFrom,
     "unknown",
   );
+});
+
+test("submitted receipt outside the current page reconciles exact saved history once", async () => {
+  const runtime = await mkdtemp(process.env.TMPDIR + "/older-receipt-");
+  let lookups = 0,
+    accepted = false;
+  const chats = {
+    page: async (_name, _query, options) =>
+      options?.lookup
+        ? (lookups++,
+          {
+            available: true,
+            binding,
+            matches: accepted
+              ? [{ id: "36659", role: "user", text: options.lookup.text, time: Date.now() - 45000 }]
+              : [],
+          })
+        : { available: true, binding },
+  };
+  const sender = new ChatSender(chats, runtime, { deliver: async () => ({ state: "submitted" }) });
+  const input = message();
+  await sender.send("sandbox", input);
+  const file = sender.file(input.requestId),
+    entry = JSON.parse(await readFile(file, "utf8"));
+  entry.created = Date.now() - 60000;
+  await writeFile(file, JSON.stringify(entry));
+  const later = [{ id: "37541", role: "user", text: "后来一条", time: Date.now() - 5000 }];
+  assert.equal(
+    (await sender.recent("sandbox", input.identity, binding, later)).length,
+    1,
+    "no match remains visible",
+  );
+  assert.equal((await sender.recent("sandbox", input.identity, binding, later)).length, 1);
+  assert.equal(lookups, 1, "negative lookup is bounded during active polling");
+  sender.lookupMiss.clear();
+  accepted = true;
+  assert.deepEqual(await sender.recent("sandbox", input.identity, binding, later), []);
+  assert.equal((await readFile(file, "utf8")).includes('"observed":"36659"'), true);
+  assert.deepEqual(
+    await sender.recent("sandbox", input.identity, binding, later),
+    [],
+    "confirmed older receipt never reappears",
+  );
+});
+
+test("owner-confirmed unresolved receipt release persists without resending or hiding its text", async () => {
+  const runtime = await mkdtemp(process.env.TMPDIR + "/release-");
+  let calls = 0;
+  const chats = { page: async () => ({ available: true, binding, messages: [] }) };
+  const sender = new ChatSender(chats, runtime, {
+    deliver: async () => {
+      calls++;
+      return { state: "unknown", deliveryStage: "verify-before-enter" };
+    },
+  });
+  const input = message(),
+    scope = { identity: input.identity, binding, confirmRelease: true };
+  assert.equal((await sender.send("sandbox", input)).state, "unknown");
+  await assert.rejects(
+    () => sender.release("sandbox", input.requestId, { ...scope, confirmRelease: false }),
+    { status: 409 },
+  );
+  await assert.rejects(
+    () => sender.release("sandbox", input.requestId, { ...scope, identity: "wrong" }),
+    { status: 404 },
+  );
+  assert.equal((await sender.release("sandbox", input.requestId, scope)).state, "released");
+  assert.equal((await sender.status("sandbox", input.requestId, scope)).state, "released");
+  const visible = await sender.recent("sandbox", input.identity, binding);
+  assert.equal(visible[0].text, input.text);
+  assert.equal(visible[0].state, "released");
+  const restarted = new ChatSender(chats, runtime, {
+    deliver: () => {
+      throw Error("must not resend");
+    },
+  });
+  assert.equal((await restarted.send("sandbox", input)).state, "released");
+  assert.equal(calls, 1);
+  assert.equal((await restarted.release("sandbox", input.requestId, scope)).state, "released");
+});
+
+test("model menu permits only exact /model, durable once and never appears as a chat bubble", async () => {
+  const runtime = await mkdtemp(process.env.TMPDIR + "/model-");
+  let calls = 0;
+  const chats = { page: async () => ({ available: true, binding, messages: [] }) };
+  const sender = new ChatSender(chats, runtime, {
+    deliver: async (name, entry) => {
+      assert.equal(name, "sandbox");
+      assert.equal(entry.transport, "terminal-model");
+      assert.equal(entry.text, "/model");
+      calls++;
+      return { state: "submitted" };
+    },
+  });
+  const model = { ...message(), text: "/model", transport: "terminal-model" };
+  await assert.rejects(() => sender.send("sandbox", { ...model, text: "/permissions" }), {
+    status: 400,
+  });
+  assert.equal((await sender.send("sandbox", model)).state, "submitted");
+  assert.equal((await sender.send("sandbox", model)).state, "submitted");
+  assert.equal(calls, 1);
+  await assert.rejects(() => sender.send("sandbox", { ...model, transport: "terminal-enter" }), {
+    status: 409,
+  });
+  assert.deepEqual(await sender.recent("sandbox", model.identity, binding), []);
+  const restarted = new ChatSender(chats, runtime, {
+    deliver: () => {
+      throw Error("must not repeat /model");
+    },
+  });
+  assert.equal((await restarted.send("sandbox", model)).state, "submitted");
 });

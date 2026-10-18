@@ -183,18 +183,18 @@ class DeskPreview {
     )
       return;
     const type = event.data?.type;
-    if (type === "workbench-preview-ready") {
+    if (type === "duck-preview-ready") {
       if (!["loading", "navigating", "ready", "error", "offline"].includes(this.state)) return;
       this.frame().bridgeReady = true;
       clearTimeout(this.timer);
       this.label("ready", "");
-    } else if (type === "workbench-preview-error") {
+    } else if (type === "duck-preview-error") {
       this.fail(
         this.serial,
         String(event.data.message || "网页暂时无法打开").slice(0, 200),
         this.direct,
       );
-    } else if (type === "workbench-preview-navigation" && this.state === "ready") {
+    } else if (type === "duck-preview-navigation" && this.state === "ready") {
       this.leftEntry = true;
       this.label("navigating", "正在打开链接…");
       // Never automatically replay navigation: the page may contain user input.

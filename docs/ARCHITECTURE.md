@@ -26,7 +26,7 @@
 
 聊天适配器目前读取 `state_5.sqlite`、`thread_history_1.sqlite` 及关联的旧版 JSONL。这些不是稳定公开 SDK；合成样例测试通过不代表适配全部 Codex 版本。升级前验证实际版本的线程识别、历史、活动、输入与审批。不支持时明确回到终端，不猜线程、不扫描其他用户。
 
-未接入官方 App Server，不提供跨用户权限管理、完整审计录像或服务端语音识别。切换前端不会更换原 Codex 的模型或安全配置。网页读到的是公开对话和已适配活动，不是私有推理。
+新版通过可用的本地 Codex App Server 只读元数据确认线程和额度，不另起模型任务；Claude Code 读取对应用户的会话记录。`chat-interaction.mjs` 处理聊天内问答，`session-runtime.mjs` 聚合运行状态，`system-status.mjs` 读取机器负载，`voice-asr.mjs` 提供可选 CPU 语音。仍不提供跨用户权限管理或完整审计录像；网页展示公开对话和已适配活动，不是私有推理。
 
 ## 状态与存储
 

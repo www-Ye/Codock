@@ -48,7 +48,7 @@ test(
     await mkdir(dir + "/project/site", { recursive: true });
     await writeFile(
       dir + "/project/site/index.html",
-      await readFile(new URL("../examples/workbench-page/index.html", import.meta.url)),
+      await readFile(new URL("../examples/duck-page/index.html", import.meta.url)),
     );
     const desk = await createDesk({
       runtime: dir + "/runtime",
@@ -67,12 +67,12 @@ test(
     const auth = await credentials("browser-test-password-only");
     await writeFile(dir + "/runtime/auth.json", JSON.stringify(auth), { mode: 0o600 });
     const browser = await chromium.launchPersistentContext(dir + "/profile", {
-      executablePath: process.env.DESK_CHROMIUM,
+      executablePath: process.env.CHROME_BIN || chromium.executablePath(),
       headless: true,
       hasTouch: true,
       viewport: { width: 390, height: 844 },
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      env: { ...process.env, TMPDIR: process.env.TMPDIR },
+      env: { ...process.env, TMPDIR: dir },
     });
     t.after(() => browser.close());
     const page = browser.pages()[0],
@@ -101,8 +101,8 @@ test(
     await page.waitForSelector(".session-card");
     assert.equal(await page.locator(".session-card").count(), 2);
     await page.click('.session-card[href="/s/sandbox"]');
-    // Chat controls reuse the actual terminal without changing tabs or submitting.
-    await page.click("#chatTerminal");
+    // Legacy terminal controls remain available for unsupported menu layouts.
+    await page.evaluate(() => openChatControls(true));
     await page.waitForFunction(() => !document.querySelector("#writeMode").disabled);
     assert(await page.locator("#chatControls").isVisible());
     assert.equal(new URL(page.url()).hash, "#chat");
@@ -179,7 +179,7 @@ test(
       beforeClose,
       "closing never submits or interrupts",
     );
-    await page.click("#chatInterrupt");
+    await page.evaluate(() => openChatControls(true));
     await page.waitForFunction(() => !document.querySelector("#chatStopTurn").disabled);
     assert.match(await page.locator("#chatControlHint").textContent(), /中断/);
     assert.equal(
@@ -189,7 +189,7 @@ test(
     );
     await page.click("#chatControlsClose");
     // Exercise navigation while the sheet is open: no orphan socket or panel.
-    await page.click("#chatTerminal");
+    await page.evaluate(() => openChatControls(true));
     await page.waitForFunction(() => !document.querySelector("#writeMode").disabled);
     await page.evaluate(() => tab("terminal"));
     assert(await page.locator("#chatControls").isHidden());
@@ -512,11 +512,11 @@ test(
     await page.click('[data-tab="preview"]');
     const demo = page.frameLocator("#previewFrame");
     await demo.locator("h1").waitFor();
-    assert.equal(await demo.locator("h1").textContent(), "不止看回复，把成果直接打开。");
-    await demo.locator('[data-plan="b"]').click();
-    assert.equal(await demo.locator("#chart strong").first().textContent(), "91%");
-    await demo.locator("summary").click();
-    assert(await demo.locator("details p").isVisible());
+    assert.equal(await demo.locator("h1").textContent(), "把小小的网页，装进口袋。");
+    await demo.locator("#hello").click();
+    assert.equal(await demo.locator("#count").textContent(), "1");
+    await demo.locator("#mode").click();
+    assert.equal(await demo.locator("#mode").getAttribute("aria-pressed"), "true");
     await page.waitForTimeout(350);
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({ path: dir + "/mobile.png", fullPage: true });
@@ -630,7 +630,7 @@ test(
     assert.equal(await page.locator("#writeMode").textContent(), "允许输入");
     assert.deepEqual(errors, []);
     await page.goto(origin + "/s/sandbox#preview");
-    await page.frameLocator("#previewFrame").locator('[data-plan="b"]').waitFor();
+    await page.frameLocator("#previewFrame").locator("#hello").waitFor();
     assert(
       await page.locator("#previewPanel").isVisible(),
       "preview deep link opens preview directly",
@@ -687,7 +687,7 @@ test(
     await page.unroute("**/slow-image.png");
     await writeFile(
       dir + "/project/site/index.html",
-      await readFile(new URL("../examples/workbench-page/index.html", import.meta.url)),
+      await readFile(new URL("../examples/duck-page/index.html", import.meta.url)),
     );
     // Abort the first grant; exactly one retry recovers. Repeated tab taps dedupe.
     let attempts = 0;
@@ -742,12 +742,9 @@ test(
     await page.waitForFunction(() => previewView.state === "offline");
     await browser.setOffline(false);
     await page.waitForFunction(() => previewView.state === "ready");
-    await page.frameLocator("#previewFrame").locator('[data-plan="b"]').click();
+    await page.frameLocator("#previewFrame").locator("#hello").click();
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
-    assert.equal(
-      await page.frameLocator("#previewFrame").locator("#chart strong").first().textContent(),
-      "91%",
-    );
+    assert.equal(await page.frameLocator("#previewFrame").locator("#count").textContent(), "1");
     // A late request from the old session cannot replace the next session's frame.
     let releaseOld;
     const oldGate = new Promise((resolve) => (releaseOld = resolve));

@@ -12,7 +12,7 @@ class DeskSessions {
     this.searchToggle = document.querySelector("#sessionSearchToggle");
     this.searchToggle.onclick = () => this.setSearch(this.search.classList.contains("hidden"));
     try {
-      const saved = JSON.parse(localStorage.getItem("workbench.pinned") || "[]");
+      const saved = JSON.parse(localStorage.getItem("codock.pinned") || "[]");
       if (Array.isArray(saved)) this.pins = new Set(saved.filter((s) => typeof s === "string"));
     } catch {}
     this.search.oninput = () => this.render();
@@ -78,16 +78,27 @@ class DeskSessions {
       this.panel.removeAttribute("aria-modal");
       if (this.panel.contains(document.activeElement)) this.toggle.focus();
     }
+    if (open) this.onOpen?.();
   }
   update(items, current) {
     this.items = [...items].sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0));
-    this.select(current);
-  }
-  select(current) {
-    // Navigation changes selection, not position. Apply recency on list refresh,
-    // independent of when asynchronous visit receipts arrive.
     this.current = current?.name;
+    for (const item of items) if (item.state !== "online") this.runtime.delete(item.name);
     this.render();
+  }
+  setRuntimes(states, { preserve = null } = {}) {
+    const retained = preserve && this.runtime.get(preserve);
+    this.runtime = new Map(
+      Object.entries(states || {}).filter(
+        ([name, state]) =>
+          this.items.some((item) => item.name === name && item.state === "online") &&
+          ["running", "waiting", "ready"].includes(state),
+      ),
+    );
+    if (retained && this.items.some((item) => item.name === preserve && item.state === "online"))
+      this.runtime.set(preserve, retained);
+    for (const row of this.list.querySelectorAll(".session-row"))
+      this.paintRuntime(row, this.runtime.get(row.dataset.name));
   }
   setRuntime(item, value) {
     this.runtime.set(item.name, value.state);
@@ -163,7 +174,7 @@ class DeskSessions {
         pin.onclick = () => {
           this.pins.has(item.name) ? this.pins.delete(item.name) : this.pins.add(item.name);
           try {
-            localStorage.setItem("workbench.pinned", JSON.stringify([...this.pins]));
+            localStorage.setItem("codock.pinned", JSON.stringify([...this.pins]));
           } catch {}
           this.render();
           this.list.querySelector(`a[href="/s/${item.name}#chat"]`)?.nextElementSibling?.focus();

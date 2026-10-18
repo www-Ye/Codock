@@ -117,12 +117,12 @@ test(
       previews.close();
     });
     const browser = await chromium.launchPersistentContext(dir + "/profile", {
-      executablePath: process.env.DESK_CHROMIUM,
+      executablePath: process.env.CHROME_BIN || chromium.executablePath(),
       headless: true,
       hasTouch: true,
       viewport: { width: 390, height: 844 },
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      env: { ...process.env, TMPDIR: process.env.TMPDIR },
+      env: { ...process.env, TMPDIR: dir },
     });
     t.after(() => browser.close());
     await browser.addCookies([
@@ -154,9 +154,9 @@ test(
       return;
     }
     const closed = async () => {
-      await frame().locator("workbench-media-viewer dialog").waitFor({ state: "hidden" });
-      await page.waitForFunction(() => !history.state?.__workbenchPreviewMedia);
-      await page.frames()[1].waitForFunction(() => !history.state?.__workbenchPreviewMedia);
+      await frame().locator("duck-media-viewer dialog").waitFor({ state: "hidden" });
+      await page.waitForFunction(() => !history.state?.__duckPreviewMedia);
+      await page.frames()[1].waitForFunction(() => !history.state?.__duckPreviewMedia);
     };
     for (const size of [
       { width: 320, height: 640 },
@@ -167,19 +167,8 @@ test(
       await page.setViewportSize(size);
       await frame().locator("#draft").fill("keep my draft");
       await frame().locator("#image").scrollIntoViewIfNeeded();
-      await page.frames()[1].evaluate(() => {
-        // Touch actionability may scroll nested frames after a viewport change.
-        // Capture the user's position at the click, before the viewer opens.
-        document.querySelector("#image").addEventListener(
-          "click",
-          () => {
-            window.fixtureOpenScroll = scrollY;
-          },
-          { once: true, capture: true },
-        );
-      });
+      const before = await page.frames()[1].evaluate(() => scrollY);
       await frame().locator("#image").tap();
-      const before = await page.frames()[1].evaluate(() => fixtureOpenScroll);
       const button = frame().getByRole("button", { name: "关闭预览" });
       await button.waitFor();
       const box = await button.boundingBox();
@@ -193,7 +182,7 @@ test(
       );
       assert(box.height >= 44);
       await frame()
-        .locator("workbench-media-viewer img")
+        .locator("duck-media-viewer img")
         .evaluate((img) => img.decode());
       assert.equal(page.frames()[1].url(), previewOrigin + "/index.html");
       await page.screenshot({ path: dir + "/media-" + size.width + ".png" });
@@ -217,9 +206,9 @@ test(
     await page.touchscreen.tap(frameBox.x + 2, frameBox.y + 2);
     await closed();
     await frame().locator("#video").tap();
-    await frame().locator("workbench-media-viewer video").waitFor();
+    await frame().locator("duck-media-viewer video").waitFor();
     await frame()
-      .locator("workbench-media-viewer video")
+      .locator("duck-media-viewer video")
       .evaluate(async (video) => {
         window.fixtureVideo = video;
         await video.play();
@@ -236,7 +225,7 @@ test(
       "close stops playback and releases media",
     );
     await frame().locator("#missing").tap();
-    await frame().locator("workbench-media-viewer p").waitFor();
+    await frame().locator("duck-media-viewer p").waitFor();
     await frame().getByRole("button", { name: "关闭预览" }).tap();
     await closed();
     let release;
@@ -252,11 +241,11 @@ test(
     await page.unroute("**/slow.png");
     await frame().locator("#custom").tap();
     assert.equal(await frame().locator("#custom").textContent(), "custom handled");
-    assert(await frame().locator("workbench-media-viewer dialog").isHidden());
+    assert(await frame().locator("duck-media-viewer dialog").isHidden());
     const download = page.waitForEvent("download");
     await frame().locator("#download").tap();
     await (await download).cancel();
-    assert(await frame().locator("workbench-media-viewer dialog").isHidden());
+    assert(await frame().locator("duck-media-viewer dialog").isHidden());
     // Script-controlled/raw navigation bypasses link handling but retains escape.
     await frame().locator("#raw").tap();
     await page.waitForFunction(() => previewView.leftEntry && previewView.state === "ready");
@@ -274,7 +263,7 @@ test(
     await page.goto(previewOrigin + "/index.html");
     await page.locator("#image").tap();
     await page.getByRole("button", { name: "关闭预览" }).tap();
-    await page.locator("workbench-media-viewer dialog").waitFor({ state: "hidden" });
+    await page.locator("duck-media-viewer dialog").waitFor({ state: "hidden" });
     assert.equal(page.url(), previewOrigin + "/index.html");
     assert.deepEqual(errors, []);
     console.log("Media preview browser artifacts:", dir);

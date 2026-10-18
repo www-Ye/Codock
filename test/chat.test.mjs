@@ -8,6 +8,7 @@ import { chromium } from "playwright-core";
 import { createDesk } from "../server.mjs";
 import { Chats } from "../lib/chat.mjs";
 import { terminalStatus, observeTerminal } from "../lib/terminal-status.mjs";
+import { ChatInteraction, parseQuestion } from "../lib/chat-interaction.mjs";
 const exec = promisify(execFile);
 const binding = "123:456:11111111-1111-1111-1111-111111111111";
 
@@ -18,6 +19,33 @@ test("live indicator observes TUI cues, never process liveness or stale history"
   assert.equal(
     state("› 1. Yes, proceed (y)\n  2. No\nPress enter to confirm or esc to cancel"),
     "waiting",
+  );
+  assert.equal(
+    state("Question 1/2 (2 unanswered)\nWhich result should I keep?\n› 1. Keep A"),
+    "waiting",
+    "Codex questionnaire is an active question",
+  );
+  assert.equal(
+    state("• Working (5s • esc to interrupt)\nShift+Left to answer questions\n› "),
+    "waiting",
+    "pending async question outranks running hint",
+  );
+  assert.equal(
+    state(
+      "• Queued follow-up inputs\n  ? 1 question\n    shift+← to answer\n\n› Ask Codex to do anything",
+    ),
+    "running",
+    "queued follow-ups are not human approval prompts",
+  );
+  assert.equal(
+    state("A file describes shift+← to answer\n› "),
+    "ready",
+    "ordinary output must not become a question alert",
+  );
+  assert.equal(
+    state("Output: Question 1/2 describes a fraction\n› "),
+    "ready",
+    "ordinary output must not create a question alert",
   );
   assert.equal(state("› "), "ready");
   assert.equal(
@@ -56,6 +84,133 @@ test("live indicator observes TUI cues, never process liveness or stale history"
   assert(!JSON.stringify(observed).includes("Working"), "captured text never leaves the observer");
   assert.equal((await observeTerminal(registry, "%1\t123\t24\t1")).state, "unknown");
   assert.equal(commands, 1, "copy-mode does not read old terminal content as live state");
+});
+
+test("chat question card accepts only a current numbered Codex questionnaire", async () => {
+  const pane = "%99",
+    id = "123:456:11111111-1111-1111-1111-111111111111";
+  const screen = (selected) =>
+    `Question 1/1 (1 unanswered)\nWhich layout should be used?\n${selected === 1 ? "›" : " "} 1. Compact\n${selected === 2 ? "›" : " "} 2. Spacious\nPress enter to confirm`;
+  assert.equal(
+    parseQuestion(
+      "• Queued follow-up inputs\n? 1 question\nshift+← to answer\n› Ask Codex to do anything",
+      pane,
+    ),
+    null,
+  );
+  assert.equal(
+    parseQuestion(screen(1) + "\n› Ask Codex to do anything", pane),
+    null,
+    "stale output is not actionable",
+  );
+  let selected = 1,
+    entered = 0,
+    escaped = 0,
+    running = false;
+  const registry = {
+    target: async () => ({ id: "$99" }),
+    command: async (args) => {
+      if (args[0] === "display-message") return `${pane}\t123\t30\t0`;
+      if (args[0] === "capture-pane")
+        return running ? "• Working (5s • esc to interrupt)\n› " : screen(selected);
+      if (args[0] === "send-keys") {
+        if (args[3] === "Down") selected++;
+        else if (args[3] === "Up") selected--;
+        else if (args[3] === "Enter") entered++;
+        else if (args[3] === "Escape") escaped++;
+        return "";
+      }
+      throw Error("unexpected command");
+    },
+  };
+  const chats = {
+    registry,
+    page: async (_name, query) => ({ available: true, binding: query.get("binding") }),
+  };
+  const terminals = { writers: new Map() },
+    interaction = new ChatInteraction(chats, terminals);
+  const question = await interaction.page("qa", "identity", id);
+  assert.equal(question.available, true);
+  assert.equal(question.title, "Which layout should be used?");
+  assert.equal(question.choices.length, 2);
+  await assert.rejects(
+    interaction.answer("qa", {
+      identity: "identity",
+      binding: id,
+      token: "0".repeat(24),
+      index: 2,
+      confirm: true,
+    }),
+    /问题已经变化/,
+  );
+  assert.equal(entered, 0);
+  terminals.writers.set("qa", {});
+  await assert.rejects(
+    interaction.answer("qa", {
+      identity: "identity",
+      binding: id,
+      token: question.token,
+      index: 2,
+      confirm: true,
+    }),
+    /另一个网页正在输入/,
+  );
+  terminals.writers.clear();
+  const result = await interaction.answer("qa", {
+    identity: "identity",
+    binding: id,
+    token: question.token,
+    index: 2,
+    confirm: true,
+  });
+  assert.equal(result.state, "submitted");
+  assert.equal(selected, 2);
+  assert.equal(entered, 1);
+  await assert.rejects(
+    interaction.answer("qa", {
+      identity: "identity",
+      binding: id,
+      token: question.token,
+      index: 2,
+      confirm: true,
+    }),
+    /已经提交过/,
+  );
+  assert.equal(entered, 1, "an ambiguous repeat cannot press Enter again");
+  assert.equal(terminals.writers.size, 0);
+  const requestId = "11111111-1111-4111-8111-111111111111";
+  await assert.rejects(
+    interaction.interrupt("qa", { identity: "identity", binding: id, requestId, confirm: true }),
+    /没有可确认的运行中任务/,
+  );
+  running = true;
+  assert.equal(
+    (
+      await interaction.interrupt("qa", {
+        identity: "identity",
+        binding: id,
+        requestId,
+        confirm: true,
+      })
+    ).state,
+    "submitted",
+  );
+  assert.equal(escaped, 1);
+  await assert.rejects(
+    interaction.interrupt("qa", { identity: "identity", binding: id, requestId, confirm: true }),
+    /刚刚收到一次中断/,
+  );
+  assert.equal(escaped, 1, "duplicate or ambiguous interruption cannot press Esc twice");
+  const unverified = new ChatInteraction(
+    { ...chats, page: async () => ({ available: true, readOnly: true, binding: id }) },
+    terminals,
+  );
+  await assert.rejects(unverified.page("qa", "identity", id), /尚未核实/);
+  await assert.rejects(
+    unverified.interrupt("qa", { identity: "identity", binding: id, requestId, confirm: true }),
+    /尚未核实/,
+  );
+  assert.equal(escaped, 1, "unverified history never sends terminal keys");
 });
 
 test("readonly history adapter: pagination, message allowlist, process binding and update", async () => {
@@ -122,11 +277,11 @@ test(
     const origin = "http://127.0.0.1:" + desk.server.address().port;
     desk.config.origin = origin;
     const browser = await chromium.launchPersistentContext(dir + "/profile", {
-      executablePath: process.env.DESK_CHROMIUM,
+      executablePath: process.env.CHROME_BIN || chromium.executablePath(),
       headless: true,
       viewport: { width: 390, height: 844 },
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      env: { ...process.env, TMPDIR: process.env.TMPDIR },
+      env: { ...process.env, TMPDIR: dir },
     });
     t.after(() => browser.close());
     const cookie = desk.auth
@@ -175,6 +330,7 @@ test("chat endpoint checks identity, cursor, pane race and coalesces concurrent 
     pane = "%1\t123",
     finish;
   const registry = {
+    socket: "/workspace/tmux.sock",
     target: async (name, identity) => {
       assert.equal(name, "sandbox");
       if (identity !== "test") throw Object.assign(Error("changed"), { status: 409 });
@@ -183,7 +339,9 @@ test("chat endpoint checks identity, cursor, pane race and coalesces concurrent 
     command: async () => pane,
   };
   const chats = new Chats(registry, {
-    read: async () => {
+    read: async (input) => {
+      assert.equal(input.pane, "%1");
+      assert.equal(input.socket, "/workspace/tmux.sock");
       calls++;
       return new Promise((r) => (finish = r));
     },
@@ -207,26 +365,61 @@ test("chat endpoint checks identity, cursor, pane race and coalesces concurrent 
   pane = "%2\t234";
   finish({ available: true, messages: [] });
   await assert.rejects(() => c, { status: 409 });
+  pane = "%1\t123";
+  const d = chats.page("sandbox", q);
+  await new Promise((r) => setImmediate(r));
+  finish({ available: true, readOnly: true, binding, messages: [] });
+  const unverified = await d;
+  assert.equal(unverified.available, true);
+  assert.equal(unverified.readOnly, true);
+  assert.equal(unverified.sendMode, null);
+  assert.match(unverified.identityNotice, /暂时只能查看/);
+  const unavailableRegistry = {
+    socket: "/workspace/tmux.sock",
+    target: async () => ({ id: "$1" }),
+    command: async (args) =>
+      args[0] === "capture-pane" ? "• Working (5s • esc to interrupt)\n› " : "%1\t123\t30\t0",
+  };
+  const unavailable = new Chats(unavailableRegistry, {
+    read: async () => ({ available: false, reason: "unavailable" }),
+  });
+  const unreadable = await unavailable.page("sandbox", q);
+  assert.equal(unreadable.available, false);
+  assert.equal(
+    unreadable.runtime.state,
+    "running",
+    "a temporarily unreadable history does not erase the independent terminal hint",
+  );
 });
 
 test(
   "mobile chat: real API authorization, Markdown, older pages, updates, routes and logout",
-  { timeout: 45000 },
+  { timeout: 60000 },
   async (t) => {
     const dir = await mkdtemp(process.env.TMPDIR + "/chat-");
     let revision = "40",
       requests = 0,
       delay = 0,
       sends = 0,
+      modelCommands = 0,
       footer = "› ",
-      captureFailed = false;
+      captureFailed = false,
+      choiceSelected = 1,
+      questionEnters = 0,
+      escapes = 0,
+      readOnly = false,
+      unreadable = false,
+      runtimeUnavailable = false,
+      completionMarker = null;
+    const questionScreen = () =>
+      `Question 1/2 (2 unanswered)\nWhich version should I keep?\n${choiceSelected === 1 ? "›" : " "} 1. Version A\n${choiceSelected === 2 ? "›" : " "} 2. Version B\nPress enter to confirm`;
     const messages = Array.from({ length: 40 }, (_, n) => ({
       id: String(n + 1),
       role: n % 2 ? "assistant" : "user",
       phase: n % 2 ? "final_answer" : null,
       text:
         n % 2
-          ? '已经整理好了。\n\n**结论**：手机也能轻松阅读原来的对话。\n\n```python\nprint("hello workbench")\n```\n\n| 项目 | 结果 |\n| --- | --- |\n| 原会话 | 保留 |\n| 网页预览 | 可用 |'
+          ? '已经整理好了。\n\n**结论**：手机也能轻松阅读原来的对话。\n\n```python\nprint("hello duck")\n```\n\n| 项目 | 结果 |\n| --- | --- |\n| 原会话 | 保留 |\n| 网页预览 | 可用 |'
           : "把原来的 Codex 对话带到手机上，不要新开一段聊天。",
       time: 1789900000000 + n * 60000,
     }));
@@ -234,11 +427,13 @@ test(
     const read = async (input) => {
       requests++;
       if (delay) await new Promise((r) => setTimeout(r, delay));
+      if (unreadable) return { available: false, reason: "unavailable" };
       if (input.revision === revision && !input.before)
-        return { available: true, binding, revision, unchanged: true };
+        return { available: true, readOnly, binding, revision, unchanged: true };
       const list = messages.filter((m) => !input.before || Number(m.id) < input.before).slice(-20);
       return {
         available: true,
+        readOnly,
         binding,
         revision,
         messages: list,
@@ -256,15 +451,25 @@ test(
           const { text } = entry;
           assert.equal(name, "sandbox");
           assert.equal(entry.binding, binding);
+          if (entry.transport === "terminal-model") {
+            assert.equal(text, "/model");
+            modelCommands++;
+            return { state: "submitted" };
+          }
           assert(text.includes("\n"));
           sends++;
           return { state: "submitted" };
         },
       },
+      voiceDependencies: {
+        available: async () => true,
+        convert: async () => Buffer.alloc(128),
+        recognize: async () => "可爱的小鸭",
+      },
     });
     desk.registry.items.sandbox = {
       name: "sandbox",
-      label: "工作台",
+      label: "示例会话",
       identity: "test",
       preview: null,
       revision: 1,
@@ -277,21 +482,51 @@ test(
       revision: 1,
     };
     desk.registry.live = async () => [
-      { name: "sandbox", identity: "test", id: "$1", windows: 1, attached: 1 },
-      { name: "notes", identity: "notes-test", id: "$2", windows: 1, attached: 0 },
+      { name: "sandbox", identity: "test", id: "$1", windows: 1, attached: 1, cols: 120, rows: 30 },
+      {
+        name: "notes",
+        identity: "notes-test",
+        id: "$2",
+        windows: 1,
+        attached: 0,
+        cols: 120,
+        rows: 30,
+      },
     ];
     desk.registry.command = async (args) => {
       if (args[0] === "capture-pane") {
         if (captureFailed) throw Error("fixture capture unavailable");
-        return footer;
+        return footer === "QUESTION" ? questionScreen() : footer;
+      }
+      if (args[0] === "send-keys") {
+        if (args[3] === "Down") choiceSelected = 2;
+        if (args[3] === "Up") choiceSelected = 1;
+        if (args[3] === "Enter") {
+          questionEnters++;
+          footer = "› ";
+        }
+        if (args[3] === "Escape") {
+          escapes++;
+          footer = "› ";
+        }
+        return "";
       }
       return "%1\t123\t30\t0";
+    };
+    desk.runtimeStatus.snapshot = async () => {
+      if (runtimeUnavailable) throw Error("temporary runtime failure");
+      return {
+        states: { sandbox: "ready", notes: "running" },
+        checkedAt: Date.now(),
+        completions: completionMarker ? { notes: completionMarker } : {},
+      };
     };
     await new Promise((r) => desk.server.listen(0, "127.0.0.1", r));
     t.after(() => desk.close());
     const origin = "http://127.0.0.1:" + desk.server.address().port;
     desk.config.origin = origin;
     assert.equal((await fetch(origin + "/api/sessions/sandbox/chat?identity=test")).status, 401);
+    assert.equal((await fetch(origin + "/api/sessions/runtime")).status, 401);
     assert.equal(
       (
         await fetch(origin + "/api/sessions/sandbox/chat", {
@@ -303,12 +538,12 @@ test(
       401,
     );
     const browser = await chromium.launchPersistentContext(dir + "/profile", {
-      executablePath: process.env.DESK_CHROMIUM,
+      executablePath: process.env.CHROME_BIN || chromium.executablePath(),
       headless: true,
       hasTouch: true,
       viewport: { width: 390, height: 844 },
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      env: { ...process.env, TMPDIR: process.env.TMPDIR },
+      env: { ...process.env, TMPDIR: dir },
     });
     t.after(() => browser.close());
     const cookie = desk.auth
@@ -327,30 +562,116 @@ test(
       void d.dismiss();
     });
     await page.addInitScript(() => {
-      window.recognizers = [];
-      window.SpeechRecognition = class {
-        constructor() {
-          window.recognizers.push(this);
+      window.recorders = [];
+      window.voiceTracks = [];
+      window.vibrations = [];
+      Object.defineProperty(navigator, "vibrate", {
+        configurable: true,
+        value: (pattern) => {
+          window.vibrations.push(pattern);
+          return true;
+        },
+      });
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: {
+          getUserMedia: async () => ({
+            getTracks: () => {
+              const track = {
+                stopped: false,
+                stop() {
+                  this.stopped = true;
+                },
+              };
+              window.voiceTracks.push(track);
+              return [track];
+            },
+          }),
+        },
+      });
+      window.MediaRecorder = class {
+        static isTypeSupported(type) {
+          return type === "audio/webm;codecs=opus";
+        }
+        constructor(stream, options) {
+          this.mimeType = options.mimeType;
+          this.state = "inactive";
+          window.recorders.push(this);
         }
         start() {
-          this.onstart?.();
+          this.state = "recording";
+        }
+        emit() {
+          const bytes = new Uint8Array(68);
+          bytes.set([0x1a, 0x45, 0xdf, 0xa3]);
+          this.ondataavailable?.({ data: new Blob([bytes], { type: this.mimeType }) });
         }
         stop() {
-          this.stopped = true;
-        }
-        abort() {
-          this.aborted = true;
-        }
-        result(text) {
-          this.onresult?.({
-            resultIndex: 0,
-            results: [Object.assign([{ transcript: text }], { isFinal: true })],
+          this.state = "inactive";
+          queueMicrotask(() => {
+            this.emit();
+            this.onstop?.();
           });
         }
       };
     });
     await page.goto(origin + "/s/sandbox#chat");
     await page.waitForSelector(".chat-message");
+    await page.waitForFunction(() => !chatView.busy);
+    const olderReceipt = "11111111-1111-4111-8111-111111111112";
+    await page.evaluate((id) => {
+      const key = chatView.key(),
+        sent = chatView.sent.get(key) || new Map();
+      sent.set(id, {
+        requestId: id,
+        text: "较早送达的消息",
+        created: 1789900000000 + 19 * 60000,
+        state: "submitted",
+        onServer: true,
+      });
+      chatView.sent.set(key, sent);
+      chatView.layout();
+    }, olderReceipt);
+    assert.equal(
+      await page.locator("#chatMessages").evaluate((e) => e.firstElementChild.dataset.receipt),
+      olderReceipt,
+      "older receipt is inserted before later history, not appended at the bottom",
+    );
+    await page.evaluate(() => chatView.load());
+    assert.equal(
+      await page.locator('[data-receipt="' + olderReceipt + '"]').count(),
+      0,
+      "server-confirmed absence removes an already observed receipt",
+    );
+    await page.click("#sessionToggle");
+    await page.waitForFunction(
+      () =>
+        document.querySelector('.session-row[data-name="notes"] .session-runtime')?.textContent ===
+          "运行中" && !runtimePending,
+    );
+    runtimeUnavailable = true;
+    await page.evaluate(() => refreshRuntime());
+    assert.equal(
+      await page.locator('.session-row[data-name="notes"] .session-runtime').textContent(),
+      "运行中",
+      "one status request failure preserves a recent observation",
+    );
+    await page.evaluate(() => {
+      runtimeLastGoodAt = Date.now() - 16000;
+    });
+    await page.evaluate(() => refreshRuntime());
+    assert(
+      await page.locator('.session-row[data-name="notes"] .session-runtime').isHidden(),
+      "expired all-session observation cannot claim a task is still running",
+    );
+    runtimeUnavailable = false;
+    await page.evaluate(() => refreshRuntime());
+    assert.equal(
+      await page.locator('.session-row[data-name="notes"] .session-runtime').textContent(),
+      "运行中",
+      "a fresh snapshot restores the badge",
+    );
+    await page.click("#sessionClose");
     assert.deepEqual(
       await page.locator("[data-tab]").evaluateAll((nodes) => nodes.map((n) => n.dataset.tab)),
       ["chat", "preview", "terminal", "settings"],
@@ -365,15 +686,134 @@ test(
       await page.locator(".session-row.active .session-runtime").textContent(),
       "运行中",
     );
+    await page.evaluate(() => refreshRuntime());
+    assert.equal(
+      await page.locator(".session-row.active .session-runtime").textContent(),
+      "运行中",
+      "a batched ready snapshot must not overwrite a newer active-chat running observation",
+    );
+    runtimeUnavailable = true;
+    await page.evaluate(() => {
+      runtimeLastGoodAt = Date.now() - 16000;
+    });
+    await page.evaluate(() => refreshRuntime());
+    assert.equal(
+      await page.locator(".session-row.active .session-runtime").textContent(),
+      "运行中",
+      "a failed batch must not erase a healthy active-chat observation",
+    );
+    assert(
+      await page.locator('.session-row[data-name="notes"] .session-runtime').isHidden(),
+      "expired batch state still clears inactive rows",
+    );
+    runtimeUnavailable = false;
+    await page.evaluate(() => {
+      chatView.runtimeObservedAt = Date.now() - 9000;
+    });
+    await page.evaluate(() => refreshRuntime());
+    assert.equal(
+      await page.locator("#chatRunLabel").textContent(),
+      "待命",
+      "a newer batch observation takes over when chat polling has stalled",
+    );
+    assert.equal(
+      await page.locator(".session-row.active .session-runtime").textContent(),
+      "待命",
+      "the active row agrees with the recovered chat label",
+    );
+    await page.evaluate(() => chatView.load());
+    assert.equal(await page.locator("#chatRunLabel").textContent(), "正在运行");
+    await page.evaluate(() =>
+      chatView.runtime({
+        state: "ready",
+        source: "terminal-hint",
+        checkedAt: chatView.runtimeCheckedAt - 1,
+      }),
+    );
+    assert.equal(
+      await page.locator("#chatRunLabel").textContent(),
+      "正在运行",
+      "an older arriving chat capture cannot reverse the latest status",
+    );
+    assert.equal(
+      await page.evaluate(() => window.vibrations.length),
+      0,
+      "observing a running task does not notify",
+    );
+    await page.route("**/api/sessions/sandbox/chat?**", (route) => route.abort("failed"), {
+      times: 1,
+    });
+    await page.evaluate(() => chatView.load());
+    assert.equal(
+      await page.locator("#chatRunLabel").textContent(),
+      "正在运行",
+      "one failed history request retains the recent terminal state",
+    );
+    page.removeAllListeners("dialog");
+    page.once("dialog", (d) => void d.accept());
+    await page.click("#chatInterrupt");
+    await page.waitForFunction(
+      () => document.querySelector("#chatRunLabel").textContent === "待命",
+    );
+    assert.equal(escapes, 1, "chat sends one guarded Esc without opening terminal");
+    assert.equal(await page.locator("#chatControls").evaluate((e) => e.open), false);
+    await page.waitForFunction(() => completionStates.get("sandbox:test")?.state === "ready");
+    assert.equal(
+      await page.evaluate(() => window.vibrations.length),
+      0,
+      "interrupt to ready without a new final reply is not completion",
+    );
+    page.on("dialog", (d) => {
+      dialogs++;
+      void d.dismiss();
+    });
     footer = "› 1. Yes, proceed (y)\nPress enter to confirm or esc to cancel";
     await page.evaluate(() => chatView.load());
     assert.equal(await page.locator("#chatRunLabel").textContent(), "等待操作 ↗");
+    footer = "QUESTION";
+    await page.evaluate(() => chatView.load());
+    await page.locator("#chatQuestion").waitFor({ state: "visible" });
+    assert.match(
+      await page.locator("#chatQuestion").textContent(),
+      /Which version should I keep\?/,
+    );
+    await page.locator("#chatQuestion .choices button").nth(1).click();
+    await page.waitForFunction(() =>
+      document.querySelector("#chatQuestion").classList.contains("hidden"),
+    );
+    assert.equal(questionEnters, 1, "chat answer confirms the current question exactly once");
+    assert.equal(
+      await page.locator("#chatControls").evaluate((e) => e.open),
+      false,
+      "question answer never opens terminal controls",
+    );
+    await page.waitForFunction(() => !chatView.busy);
     footer = "› ";
     await page.evaluate(() => chatView.load());
     assert.equal(await page.locator("#chatRunLabel").textContent(), "待命");
+    assert(await page.locator("#chatAttention").isHidden());
     captureFailed = true;
     await page.evaluate(() => chatView.load());
     assert.equal(await page.locator("#chatRunLabel").textContent(), "状态待确认");
+    runtimeUnavailable = true;
+    await page.evaluate(() => refreshRuntime());
+    assert.equal(
+      await page.locator("#chatRunLabel").textContent(),
+      "状态待确认",
+      "two failed observers never invent a ready or running state",
+    );
+    runtimeUnavailable = false;
+    await page.evaluate(() => refreshRuntime());
+    assert.equal(
+      await page.locator("#chatRunLabel").textContent(),
+      "待命",
+      "a valid batch hint recovers an unknown chat state",
+    );
+    assert.equal(
+      await page.locator(".session-row.active .session-runtime").textContent(),
+      "待命",
+      "recovered state is consistent in both places",
+    );
     captureFailed = false;
     await page.evaluate(() => chatView.load());
     const theme = await page.evaluate(() => {
@@ -418,6 +858,19 @@ test(
       "undefined",
       "chat does not load xterm",
     );
+    await page.click("#chatModel");
+    assert(await page.locator("#chatControls").isVisible());
+    await page.waitForFunction(() =>
+      document.querySelector("#chatControlHint").textContent.includes("模型菜单已打开"),
+    );
+    assert.equal(modelCommands, 1);
+    assert.equal(sends, 0);
+    assert.equal(
+      await page.locator("#chatPreview,#chatTerminal").count(),
+      0,
+      "redundant footer buttons are removed",
+    );
+    await page.click("#chatControlsClose");
     assert.equal(await page.locator(".chat-message-body table").count(), 10);
     assert.equal(
       await page
@@ -440,10 +893,10 @@ test(
         await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
         "no horizontal page overflow",
       );
-      const button = await page.locator("#chatTerminal").boundingBox();
+      const button = await page.locator("#chatModel").boundingBox();
       assert(
         button.y + button.height <= size.height,
-        `continue action stays visible at ${size.width}x${size.height}: ${button.y + button.height}`,
+        `model action stays visible at ${size.width}x${size.height}: ${button.y + button.height}`,
       );
       const area = await page.locator("#chatScroll").boundingBox();
       assert(area.height > size.height * 0.56, "chat keeps the majority of the viewport");
@@ -469,7 +922,7 @@ test(
     await page.fill("#sessionSearch", "研究");
     assert.equal(await page.locator(".session-row").count(), 1);
     await page.fill("#sessionSearch", "");
-    await page.click('[aria-label="置顶 工作台"]');
+    await page.click('[aria-label="置顶 示例会话"]');
     assert.equal(await page.locator(".session-section").first().textContent(), "常用");
     await page.press("#sessionSearch", "Escape");
     assert(await page.locator("#sessionSearch").isHidden());
@@ -522,8 +975,56 @@ test(
     const count = requests;
     await page.waitForTimeout(200);
     assert.equal(requests, count);
+    delay = 500;
     await page.click('[data-tab="chat"]');
-    await page.waitForSelector(".chat-message");
+    assert.equal(
+      await page.locator(".chat-message:last-child").getAttribute("data-id"),
+      "61",
+      "revisiting renders the last verified page immediately",
+    );
+    await page.waitForFunction(() => {
+      const e = document.querySelector("#chatScroll");
+      return e.scrollHeight - e.scrollTop - e.clientHeight < 5;
+    });
+    assert(
+      (await page
+        .locator("#chatScroll")
+        .evaluate((e) => e.scrollHeight - e.scrollTop - e.clientHeight)) < 5,
+      "re-entering chat starts at latest, not the top",
+    );
+    assert.equal(
+      await page.locator("#chatSend").isDisabled(),
+      true,
+      "cached history is read-only until the original thread is revalidated",
+    );
+    await page.waitForFunction(() => !document.querySelector("#chatSend").disabled);
+    const cacheCoverage = await page.evaluate(() => {
+      const original = {
+        item: chatView.item,
+        binding: chatView.binding,
+        nodes: chatView.nodes,
+        revision: chatView.revision,
+        before: chatView.before,
+      };
+      for (let i = 0; i < 6; i++) {
+        chatView.item = { name: "cache-" + i, identity: "identity-" + i };
+        chatView.binding = "1:1:00000000-0000-0000-0000-000000000001";
+        chatView.nodes = new Map([
+          [
+            "1",
+            { record: { id: "1", role: "assistant", text: "snapshot " + i, time: Date.now() } },
+          ],
+        ]);
+        chatView.saveView();
+      }
+      Object.assign(chatView, original);
+      return [chatView.views.has("cache-0:identity-0"), chatView.views.has("cache-5:identity-5")];
+    });
+    assert.deepEqual(
+      cacheCoverage,
+      [true, true],
+      "switching beyond four sessions retains the first recent conversation",
+    );
     await page.fill("#chatDraft", "手机发送验收\nEnter 保留换行");
     await page.press("#chatDraft", "Enter");
     assert.equal(sends, 0, "Enter adds a line, never submits");
@@ -647,6 +1148,86 @@ test(
       "detail stays expanded across updates",
     );
     assert.match(await page.locator(".activity-group>summary").textContent(), /4 条执行记录/);
+    footer = "• Working (5s • esc to interrupt)\n› ";
+    await page.evaluate(() => chatView.load());
+    assert.equal(
+      await page.evaluate(() => window.vibrations.length),
+      0,
+      "old final replies do not notify a newly running task",
+    );
+    messages.push({
+      id: "69",
+      role: "assistant",
+      phase: "final_answer",
+      text: "这轮任务已完成。",
+      time: Date.now(),
+    });
+    revision = "70";
+    footer = "› ";
+    await page.evaluate(() => chatView.load());
+    await page.waitForFunction(() => window.vibrations.length === 1);
+    await page.evaluate(() => chatView.load());
+    assert.equal(
+      await page.evaluate(() => window.vibrations.length),
+      1,
+      "repeated ready polls notify only once",
+    );
+    footer = "• Working (5s • esc to interrupt)\n› ";
+    await page.evaluate(() => chatView.load());
+    const runningSince = await page.evaluate(() => completionStates.get("sandbox:test").since);
+    assert(Number.isFinite(runningSince));
+    messages.push({
+      id: "70",
+      role: "assistant",
+      phase: "final_answer",
+      text: "已经完成第二轮。",
+      time: runningSince - 5000,
+    });
+    revision = "71";
+    footer = "› ";
+    await page.evaluate(() => chatView.load());
+    await page.waitForFunction(() => window.vibrations.length === 2);
+    assert.equal(
+      await page.evaluate(() => window.vibrations.length),
+      2,
+      "a new final saved before the terminal redraw still notifies",
+    );
+    footer = "• Working (5s • esc to interrupt)\n› ";
+    await page.evaluate(() => chatView.load());
+    footer = "› ";
+    await page.evaluate(() => chatView.load());
+    await page.waitForTimeout(2600);
+    messages.push({
+      id: "71",
+      role: "assistant",
+      phase: "final_answer",
+      text: "稍后保存的最终回复。",
+      time: Date.now(),
+    });
+    revision = "72";
+    await page.waitForFunction(() => window.vibrations.length === 3);
+    await page.evaluate(() => chatView.load());
+    assert.equal(
+      await page.evaluate(() => window.vibrations.length),
+      3,
+      "late final notifies once after ready, not on every poll",
+    );
+    messages.push({
+      id: "72",
+      role: "assistant",
+      phase: "final_answer",
+      text: "很短的一轮已经完成。",
+      time: Date.now(),
+    });
+    revision = "73";
+    await page.evaluate(() => chatView.load());
+    await page.waitForFunction(() => window.vibrations.length === 4);
+    await page.evaluate(() => chatView.load());
+    assert.equal(
+      await page.evaluate(() => window.vibrations.length),
+      4,
+      "a final reply alerts once even when both runtime samples are ready",
+    );
     await page.click("#chatActivityToggle");
     assert(await page.locator(".activity-group").isHidden());
     await page.click("#chatActivityToggle");
@@ -665,71 +1246,173 @@ test(
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await page.screenshot({ path: dir + `/workspace-${size.width}.png` });
     }
-    // Dictation changes only the draft; synthetic recognition, no real microphone or auto-send.
+    // One tap starts recording without a popup; final text edits only this draft, never auto-sends.
+    const voiceModes = [];
+    page.on("request", (request) => {
+      if (request.url().endsWith("/api/voice/transcribe"))
+        voiceModes.push(request.postDataJSON().mode);
+    });
     await page.fill("#chatDraft", "原草稿：");
+    const composerHeight = await page
+      .locator(".chat-bottom")
+      .evaluate((e) => e.getBoundingClientRect().height);
     await page.click("#chatVoice");
-    assert.equal(await page.evaluate(() => recognizers.length), 0, "disclosure before recording");
-    assert.match(await page.locator("#voiceStatus").textContent(), /联网识别/);
-    await page.click("#voiceStart");
-    assert.equal(await page.evaluate(() => recognizers.at(-1).lang), "zh-CN");
-    await page.evaluate(() => recognizers.at(-1).result("可爱的工作台"));
-    assert.equal(await page.inputValue("#chatDraft"), "原草稿：可爱的工作台");
-    assert.equal(sends, 2);
-    assert(await page.locator("#voicePanel").isHidden());
-    await page.click("#chatVoice");
-    await page.click("#chatVoice");
-    assert(await page.evaluate(() => recognizers.at(-1).stopped));
-    await page.evaluate(() => recognizers.at(-1).result("继续听写"));
-    assert.equal(await page.inputValue("#chatDraft"), "原草稿：可爱的工作台继续听写");
-    await page.click("#chatVoice");
-    await page.click("#chatVoice");
+    await page.waitForFunction(() => recorders.length === 1);
+    assert.equal(await page.locator("#voicePanel").count(), 0, "the old popup is removed");
+    assert.match(await page.locator("#voiceStatus").textContent(), /正在录音/);
+    assert.equal(await page.locator("#chatVoice").getAttribute("data-voice"), "listening");
     assert(
-      await page.evaluate(() => recognizers.at(-1).stopped),
-      "each new listening session can be stopped",
+      Math.abs(
+        (await page.locator(".chat-bottom").evaluate((e) => e.getBoundingClientRect().height)) -
+          composerHeight,
+      ) < 1,
+      "normal recording never expands the composer",
     );
-    await page.evaluate(() => recognizers.at(-1).onend());
-    await page.click("#voiceClose");
+    assert.equal(await page.evaluate(() => recorders.at(-1).mimeType), "audio/webm;codecs=opus");
     await page.click("#chatVoice");
+    await page.waitForFunction(
+      () => document.querySelector("#chatDraft").value === "原草稿：可爱的小鸭",
+    );
+    assert.equal(await page.inputValue("#chatDraft"), "原草稿：可爱的小鸭");
+    assert.equal(sends, 2);
+    assert(voiceModes.includes("accurate"), "tap-to-dictate sends final audio to the quality path");
+    assert(await page.locator("#voiceStatus").isHidden());
+    assert(
+      Math.abs(
+        (await page.locator(".chat-bottom").evaluate((e) => e.getBoundingClientRect().height)) -
+          composerHeight,
+      ) < 1,
+      "final recognition restores the same composer height",
+    );
+    await page.click("#chatVoice");
+    await page.waitForFunction(() => recorders.length === 2);
     await page.fill("#chatDraft", "手动改字");
-    assert(await page.evaluate(() => recognizers.at(-1).aborted));
-    await page.evaluate(() => recognizers.at(-1).result("迟到结果"));
+    assert(await page.evaluate(() => recorders.at(-1).state === "inactive"));
     assert.equal(await page.inputValue("#chatDraft"), "手动改字");
-    await page.click("#voiceStart");
-    await page.evaluate(() => recognizers.at(-1).onerror({ error: "not-allowed" }));
-    assert.match(await page.locator("#voiceStatus").textContent(), /权限/);
-    assert.equal(await page.inputValue("#chatDraft"), "手动改字");
-    await page.selectOption("#voiceLang", "en-US");
-    await page.click("#voiceStart");
-    assert.equal(await page.evaluate(() => recognizers.at(-1).lang), "en-US");
-    await page.evaluate(() => recognizers.at(-1).onerror({ error: "network" }));
-    assert.match(await page.locator("#voiceStatus").textContent(), /连不上/);
-    await page.click("#voiceStart");
-    await page.evaluate(() => recognizers.at(-1).result("鸭".repeat(4001)));
-    assert.equal(await page.inputValue("#chatDraft"), "手动改字");
-    assert.match(await page.locator("#voiceStatus").textContent(), /太长/);
-    await page.click("#voiceClose");
     await page.click("#chatVoice");
+    await page.waitForFunction(() => recorders.length === 3);
+    await page.evaluate(() => chatView.voice.close());
+    assert(await page.locator("#voiceStatus").isHidden());
+    assert(await page.evaluate(() => voiceTracks.at(-1).stopped));
+    await page.fill("#chatDraft", "");
+    await page.evaluate(() =>
+      document.querySelector("#chatVoice").dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          pointerId: 7,
+          pointerType: "touch",
+          button: 0,
+        }),
+      ),
+    );
+    await page.waitForFunction(() => recorders.length === 4);
+    await page.evaluate(() => {
+      chatView.voice.startedAt = Date.now() - 3200;
+      recorders.at(-1).emit();
+    });
+    await page.waitForFunction(() =>
+      document.querySelector("#voiceStatus").textContent.includes("边说边识别"),
+    );
+    assert(voiceModes.includes("fast"), "provisional text stays on the fast path");
+    assert.equal(
+      await page.inputValue("#chatDraft"),
+      "",
+      "provisional words never enter the draft",
+    );
+    assert.equal(sends, 2);
+    assert.equal(
+      await page.locator("#chatDraft").getAttribute("placeholder"),
+      "可爱的小鸭",
+      "provisional words use the existing input without adding a row",
+    );
+    assert(
+      Math.abs(
+        (await page.locator(".chat-bottom").evaluate((e) => e.getBoundingClientRect().height)) -
+          composerHeight,
+      ) < 1,
+    );
+    await page.evaluate(() =>
+      document.querySelector("#chatVoice").dispatchEvent(
+        new PointerEvent("pointerup", {
+          bubbles: true,
+          pointerId: 7,
+          pointerType: "touch",
+          button: 0,
+        }),
+      ),
+    );
+    await page.waitForFunction(() => document.querySelector("#chatDraft").value === "可爱的小鸭");
+    await page.evaluate(() =>
+      document
+        .querySelector("#chatVoice")
+        .dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })),
+    );
+    assert(await page.locator("#voiceStatus").isHidden());
+    assert.equal(sends, 2, "release inserts final text but never sends");
+    assert.equal(await page.locator("#chatDraft").getAttribute("placeholder"), "继续这段对话…");
+    await page.fill("#chatDraft", "手动改字");
+    await page.evaluate(() => {
+      window.originalGetUserMedia = navigator.mediaDevices.getUserMedia;
+      navigator.mediaDevices.getUserMedia = () =>
+        new Promise((resolve) => {
+          window.grantVoice = () => {
+            const track = {
+              stopped: false,
+              stop() {
+                this.stopped = true;
+              },
+            };
+            window.voiceTracks.push(track);
+            resolve({ getTracks: () => [track] });
+          };
+        });
+    });
+    await page.evaluate(() =>
+      document.querySelector("#chatVoice").dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          pointerId: 8,
+          pointerType: "touch",
+          button: 0,
+        }),
+      ),
+    );
+    await page.waitForFunction(() =>
+      document.querySelector("#voiceStatus").textContent.includes("正在打开麦克风"),
+    );
+    await page.evaluate(() => {
+      const button = document.querySelector("#chatVoice");
+      button.dispatchEvent(
+        new PointerEvent("pointerup", {
+          bubbles: true,
+          pointerId: 8,
+          pointerType: "touch",
+          button: 0,
+        }),
+      );
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+      window.grantVoice();
+    });
+    await page.waitForFunction(() => voiceTracks.at(-1).stopped);
+    assert.equal(
+      await page.evaluate(() => recorders.length),
+      4,
+      "release before permission never starts recording",
+    );
+    assert.equal(await page.inputValue("#chatDraft"), "手动改字");
+    assert.equal(sends, 2);
+    await page.evaluate(() => {
+      navigator.mediaDevices.getUserMedia = window.originalGetUserMedia;
+    });
+    await page.click("#chatVoice");
+    await page.waitForFunction(() => recorders.length === 5);
     await page.click('#sessionList a[href="/s/notes#chat"]');
     await page.waitForFunction(
       () => location.pathname === "/s/notes" && !document.querySelector("#chatDraft").disabled,
     );
-    assert(await page.evaluate(() => recognizers.at(-1).aborted));
-    await page.click("#chatVoice");
-    await page.evaluate(() => recognizers.at(-2).result("不要串会话"));
-    assert(
-      !(await page.evaluate(() => recognizers.at(-1).aborted)),
-      "late previous-session result cannot cancel new dictation",
-    );
     assert.equal(await page.inputValue("#chatDraft"), "");
-    await page.click("#voiceClose");
-    await page.evaluate(() => {
-      window.SpeechRecognition = undefined;
-      window.webkitSpeechRecognition = undefined;
-    });
     await page.click("#chatVoice");
-    assert.match(await page.locator("#voiceStatus").textContent(), /键盘上的麦克风/);
-    assert(await page.locator("#voiceStart").isHidden());
-    await page.click("#voiceClose");
+    await page.waitForFunction(() => recorders.length === 6);
     await page.click('#sessionList a[href="/s/sandbox#chat"]');
     await page.waitForFunction(
       () => location.pathname === "/s/sandbox" && !document.querySelector("#chatDraft").disabled,
@@ -737,7 +1420,6 @@ test(
     assert.equal(await page.inputValue("#chatDraft"), "手动改字");
     assert.equal(sends, 2);
     // Session selection is navigation, not a tmux mutation; draft stays in its chat.
-    const visibleOrder = await page.evaluate(() => sessionView.items.map((s) => s.name));
     await page.fill("#chatDraft", "保留这个会话的草稿");
     await page.click('#sessionList a[href="/s/notes#chat"]');
     await page.waitForFunction(
@@ -754,13 +1436,11 @@ test(
         sessions.find((s) => s.name === "sandbox").lastOpenedAt >
         sessions.find((s) => s.name === "notes").lastOpenedAt,
     );
-    await page.click('[aria-label="取消置顶 工作台"]');
-    assert.deepEqual(
-      await page
-        .locator("#sessionList a")
-        .evaluateAll((links) => links.map((a) => a.getAttribute("href"))),
-      visibleOrder.map((name) => "/s/" + name + "#chat"),
-      "navigation and visit receipts preserve the displayed order until refresh",
+    await page.click('[aria-label="取消置顶 示例会话"]');
+    assert.equal(
+      await page.locator("#sessionList a").first().getAttribute("href"),
+      "/s/notes#chat",
+      "recording a visit does not move the clicked row immediately",
     );
     await page.click("#deskMenu summary");
     await page.click("#refresh");
@@ -836,6 +1516,99 @@ test(
       .click();
     assert.equal(await page.inputValue("#chatDraft"), "待取回的原文 0");
     assert.equal(sends, 2);
+    const beforeOutage = await page.locator(".chat-message").count();
+    footer = "• Working (5s • esc to interrupt)\n› ";
+    unreadable = true;
+    await page.evaluate(() => {
+      chatView.active = true;
+      return chatView.load();
+    });
+    assert.equal(
+      await page.locator(".chat-message").count(),
+      beforeOutage,
+      "a transient reader failure keeps the last confirmed history visible",
+    );
+    assert.equal(
+      await page.locator("#chatRunLabel").textContent(),
+      "正在运行",
+      "conversation read failure still shows observed terminal activity",
+    );
+    assert(await page.locator("#chatDraft").isDisabled());
+    assert.equal(await page.inputValue("#chatDraft"), "待取回的原文 0");
+    assert.equal(
+      await page.evaluate(() => chatView.active),
+      true,
+      "transient failure keeps the retry loop alive",
+    );
+    unreadable = false;
+    footer = "› ";
+    await page.evaluate(() => chatView.load());
+    assert.equal(await page.evaluate(() => chatView.active), true);
+    assert(await page.locator("#chatDraft").isEnabled());
+    assert.equal(await page.inputValue("#chatDraft"), "待取回的原文 0");
+    readOnly = true;
+    await page.evaluate(() => {
+      chatView.active = true;
+      return chatView.load();
+    });
+    await page.waitForFunction(
+      () => document.querySelector("#chatSend").textContent === "只读记录",
+    );
+    assert((await page.locator(".chat-message").count()) > 0);
+    assert(await page.locator("#chatDraft").isDisabled());
+    assert.match(await page.locator("#chatStatus").textContent(), /暂时只能查看/);
+    assert.equal(sends, 2);
+    assert.equal(
+      await page.evaluate(() => window.vibrations.length),
+      0,
+      "opening an existing conversation does not notify for old history",
+    );
+    await page.click('[data-tab="settings"]');
+    await page.click("#testVibration");
+    assert.match(await page.locator("#vibrationStatus").textContent(), /已请求|不支持|未允许/);
+    assert.equal(
+      await page.evaluate(() => window.vibrations.length),
+      1,
+      "manual diagnostic calls the same browser vibration API once",
+    );
+    const markerBinding = "123:456:22222222-2222-2222-2222-222222222222";
+    completionMarker = { identity: "wrong", binding: markerBinding, id: "10", time: Date.now() };
+    await page.evaluate(() => refreshRuntime());
+    assert.equal(
+      await page.evaluate(() => window.vibrations.length),
+      1,
+      "a marker from the wrong session identity cannot notify",
+    );
+    completionMarker = {
+      identity: "notes-test",
+      binding: markerBinding,
+      id: "10",
+      time: Date.now() - 3600000,
+    };
+    await page.evaluate(() => refreshRuntime());
+    assert.equal(
+      await page.evaluate(() => window.vibrations.length),
+      1,
+      "the first old completed turn is only a baseline",
+    );
+    completionMarker = {
+      identity: "notes-test",
+      binding: markerBinding,
+      id: "11",
+      time: Date.now(),
+    };
+    await page.evaluate(() => refreshRuntime());
+    assert.equal(
+      await page.evaluate(() => window.vibrations.length),
+      2,
+      "an inactive short turn notifies even when both sampled states are running",
+    );
+    await page.evaluate(() => refreshRuntime());
+    assert.equal(
+      await page.evaluate(() => window.vibrations.length),
+      2,
+      "the same saved completion never notifies twice",
+    );
     await page.click("#deskMenu summary");
     await page.click("#logout");
     await page.waitForSelector("#login", { state: "visible" });
