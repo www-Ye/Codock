@@ -6,21 +6,23 @@ English · [简体中文](ARCHITECTURE.md)
 
 ## One execution context
 
-HTTPS/WSS connects browsers to one Node service. Chat reads original Codex history; input reaches the original tmux. No second model process. Previews have separate origins but share authenticated authorization. An optional restricted reverse SSH tunnel connects separate gateway/workstation hosts.
+HTTPS/WSS connects browsers to one Node service. Chat reads original Codex history; input reaches the original tmux. Ordinary chat reuses the original process; the optional task assistant makes separate read-only model calls. Previews have separate origins but share authenticated authorization. An optional restricted reverse SSH tunnel connects separate gateway/workstation hosts.
 
-| Module                            | Responsibility                                           |
-| --------------------------------- | -------------------------------------------------------- |
-| `server.mjs`                      | HTTP/WS routes, exact Host/Origin checks, lifecycle      |
-| `lib/config.mjs`, `preflight.mjs` | Config, safe rendering, credential validation            |
-| `auth.mjs`, `github-auth.mjs`     | Sessions, password/TOTP or single-account GitHub login   |
-| `registry.mjs`                    | Allowlist, recreated-session identity, preview bindings  |
-| `terminal.mjs`, `history.mjs`     | PTY, write leases, keys, read-only history               |
-| `chat.mjs`, `codex-reader.py`     | Process binding, read-only history and activities        |
-| `chat-send.mjs`, `chat-input.mjs` | Same-thread delivery, receipts, no ambiguous replay      |
-| `preview*.mjs`, `control.mjs`     | Preview authorization, media, owner-only binding API     |
-| `public/`                         | Vanilla UI, lazy terminal and on-demand activity details |
+| Module                                                      | Responsibility                                                  |
+| ----------------------------------------------------------- | --------------------------------------------------------------- |
+| `server.mjs`                                                | HTTP/WS routes, exact Host/Origin checks, lifecycle             |
+| `lib/config.mjs`, `preflight.mjs`                           | Config, safe rendering, credential validation                   |
+| `auth.mjs`, `github-auth.mjs`                               | Sessions, password/TOTP or single-account GitHub login          |
+| `registry.mjs`                                              | Allowlist, recreated-session identity, preview bindings         |
+| `terminal.mjs`, `history.mjs`                               | PTY, write leases, keys, read-only history                      |
+| `chat.mjs`, `codex-reader.py`                               | Process binding, read-only history and activities               |
+| `chat-send.mjs`, `chat-input.mjs`                           | Same-thread delivery, receipts, no ambiguous replay             |
+| `preview*.mjs`, `control.mjs`                               | Preview authorization, media, owner-only binding API            |
+| `account-pool.mjs`, `system-account.mjs`, `account-rpc.mjs` | Local account storage, shared switching, authentication renewal |
+| `guardian*.mjs`                                             | Progress discovery, milestone review and quiet notifications    |
+| `public/`                                                   | Vanilla UI, lazy terminal and on-demand activity details        |
 
-Main endpoints: `/api/bootstrap`, `/api/sessions`, `/api/sessions/:name/chat`, `/api/sessions/:name/preview`, `/ws`. Binding commands use an owner-only Unix socket, not public management endpoints.
+Account and assistant endpoints: `/api/accounts`, `/api/accounts/system`, `/api/account/quota`, `/api/guardian` (authenticated). Main endpoints: `/api/bootstrap`, `/api/sessions`, `/api/sessions/:name/chat`, `/api/sessions/:name/preview`, `/ws`. Binding commands use an owner-only Unix socket, not public management endpoints.
 
 ## Compatibility
 
@@ -30,7 +32,7 @@ When available, local Codex App Server metadata confirms thread identity and quo
 
 ## State
 
-`config.json` stores instance parameters. `runtime/` holds credentials, bindings, recency and receipts, possibly including message text. Login/preview grants are in memory, so restarts require login. tmux survival across browser disconnects does not imply recovery after host replacement.
+`config.json` stores instance parameters. `runtime/` holds credentials, bindings, recency and receipts, possibly including message text. Saved account logins (default: `runtime/accounts/`) and assistant state are private runtime data. Login/preview grants are in memory, so restarts require login. tmux survival across browser disconnects does not imply recovery after host replacement.
 
 One process per instance; do not attach several Node replicas to the same socket. Scale with separate users, instances, ports, domains and Codex environments. Untrusted users also need VM/container and network isolation.
 

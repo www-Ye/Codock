@@ -1,0 +1,301 @@
+.guardian-toggle {
+  position: relative;
+  flex: none;
+  font-size: 12px;
+  padding: 5px 8px;
+  min-width: 44px;
+  min-height: 40px;
+  white-space: nowrap;
+}
+.guardian-toggle.has-unread {
+  color: var(--accent);
+}
+.guardian-toggle.has-unread:after {
+  content: "";
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.guardian-dialog {
+  width: min(660px, calc(100vw - 20px));
+  height: min(720px, calc(100dvh - 24px));
+  max-height: calc(100dvh - 24px);
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface);
+  color: var(--text);
+  overflow: hidden;
+  box-shadow: 0 24px 90px #0007;
+}
+.guardian-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.guardian-dialog [hidden] {
+  display: none !important;
+}
+.guardian-dialog::backdrop {
+  background: #080e0bc0;
+}
+.guardian-head,
+.guardian-tools,
+.guardian-task-head,
+.guardian-task-meta,
+.guardian-task-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.guardian-head {
+  flex: none;
+}
+.guardian-head h2 {
+  font-size: 18px;
+}
+.guardian-head > button {
+  font-size: 24px;
+  padding: 0;
+  min-width: 40px;
+  min-height: 40px;
+}
+.guardian-tabs {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  padding: 3px;
+  background: var(--sidebar);
+  border-radius: 12px;
+}
+.guardian-tabs button {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  padding: 6px;
+  font-size: 13px;
+  border-radius: 9px;
+}
+.guardian-tabs button[aria-pressed="true"] {
+  background: var(--raised);
+  color: var(--accent);
+}
+.guardian-status {
+  flex: none;
+}
+.guardian-status:empty {
+  display: none;
+}
+.guardian-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.guardian-chat-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.guardian-messages {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+  padding: 4px 0 12px;
+}
+.guardian-message {
+  flex: none;
+  background: #ffffff06;
+  border-radius: 12px;
+  padding: 10px 12px;
+  max-width: 94%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.guardian-message.user {
+  align-self: flex-end;
+  background: #a4c5a01c;
+}
+.guardian-message.notice {
+  font-size: 12px;
+  opacity: 0.75;
+}
+.guardian-message p {
+  margin: 5px 0;
+  line-height: 1.65;
+}
+.guardian-compose {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.guardian-compose textarea {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  min-height: 44px;
+  max-height: 120px;
+  resize: vertical;
+  font-size: 16px;
+  padding: 10px;
+}
+.guardian-compose button {
+  flex: none;
+  min-height: 44px;
+  font-size: 13px;
+  padding: 8px 12px;
+}
+.guardian-tools {
+  margin: 0 0 8px;
+  flex-wrap: wrap;
+}
+.guardian-tools button {
+  font-size: 12px;
+  min-height: 40px;
+  padding: 5px 8px;
+}
+.guardian-tasks,
+.guardian-events {
+  display: grid;
+  gap: 8px;
+}
+.guardian-task,
+.guardian-event {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  min-width: 0;
+}
+.guardian-task-head a {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.guardian-task-head button {
+  flex: none;
+  font-size: 12px;
+  min-height: 40px;
+  padding: 5px 8px;
+}
+.guardian-task-head .guardian-remove {
+  font-size: 21px;
+  min-width: 40px;
+  color: var(--muted);
+}
+.guardian-task-meta {
+  margin: 2px 0;
+}
+.guardian-task progress {
+  display: block;
+  width: 100%;
+  height: 5px;
+  accent-color: var(--accent);
+  margin: 8px 0 4px;
+}
+.guardian-task-bottom {
+  align-items: flex-start;
+}
+.guardian-task-bottom > button {
+  flex: none;
+  font-size: 12px;
+  min-height: 36px;
+  padding: 5px 8px;
+}
+.guardian-task-detail {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.guardian-task-detail summary {
+  cursor: pointer;
+  padding: 9px 0;
+}
+.guardian-task-detail p {
+  padding: 0 0 6px;
+  overflow-wrap: anywhere;
+}
+.guardian-fold {
+  margin-top: 14px;
+}
+.guardian-fold > summary {
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 10px 2px;
+}
+.guardian-fold .guardian-tasks,
+.guardian-fold .guardian-events {
+  padding-top: 4px;
+}
+.guardian-parts {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+.guardian-parts p {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.guardian-parts p > span:last-child {
+  flex: none;
+}
+.guardian-event.unread {
+  border-left: 2px solid var(--accent);
+}
+.guardian-event p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.guardian-event a {
+  font-size: 12px;
+  color: var(--accent);
+  margin: 0 8px;
+}
+.guardian-event button {
+  font-size: 12px;
+  min-height: 36px;
+  padding: 5px 8px;
+}
+.guardian-empty {
+  padding: 24px 12px;
+  line-height: 1.9;
+  text-align: center;
+}
+@media (max-width: 600px) {
+  .guardian-dialog {
+    padding: 12px;
+    height: calc(100dvh - 16px);
+    max-height: calc(100dvh - 16px);
+    border-radius: 16px;
+    gap: 8px;
+  }
+  .guardian-toggle {
+    font-size: 12px;
+    padding: 5px 6px;
+  }
+  .guardian-head h2 {
+    font-size: 17px;
+  }
+}

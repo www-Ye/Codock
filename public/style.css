@@ -1004,6 +1004,7 @@ label select {
 }
 .preview-top > div {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 #chatPanel {
@@ -2160,7 +2161,7 @@ body.workspace-mode .header .workspace-toolbar {
 }
 .header .tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   flex: none;
   margin: 0;
   padding: 2px;
@@ -2235,6 +2236,43 @@ body.workspace-mode .header .workspace-toolbar {
 }
 .desk-menu-items a:hover {
   background: var(--raised);
+}
+.header .desk-menu-items .account-toggle {
+  width: 100%;
+  max-width: none;
+}
+#sessionSettings {
+  display: none;
+}
+body.workspace-mode #sessionSettings {
+  display: block;
+}
+#quotaShortcut {
+  display: none;
+}
+@media (max-width: 850px) {
+  #quotaShortcut {
+    display: block;
+  }
+  #quotaMenu {
+    position: absolute;
+    right: 4px;
+    top: 0;
+    width: 0;
+    height: 46px;
+  }
+  #quotaMenu > summary {
+    display: none;
+  }
+  #quotaMenu .quota-panel {
+    top: 48px;
+    right: 0;
+  }
+  .header .brand {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
 }
 #workspace {
   display: flex;

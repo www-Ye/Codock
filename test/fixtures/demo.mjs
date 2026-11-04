@@ -45,6 +45,8 @@ export async function createDemo() {
   }));
   const desk = await createDesk({
     runtime: directory + "/runtime",
+    codexHome: directory + "/runtime" + "/codex",
+    claudeHome: directory + "/runtime" + "/claude",
     socket: directory + "/absent.sock",
     allowed: ["demo", "design", "research"],
     secure: false,

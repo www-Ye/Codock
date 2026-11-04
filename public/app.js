@@ -250,7 +250,7 @@ const quotaTitle = document.createElement("h2");
 quotaTitle.textContent = "Codex 剩余额度";
 const quotaNote = document.createElement("p");
 quotaNote.className = "micro";
-quotaNote.textContent = "本机 Codex 登录账号共用，不是上下文剩余。";
+quotaNote.textContent = "当前会话使用的账号额度，不是上下文剩余。";
 const quotaRows = document.createElement("div"),
   quotaTime = document.createElement("p");
 quotaTime.className = "micro";
@@ -262,7 +262,8 @@ quotaPanel.append(quotaTitle, quotaNote, quotaRows, quotaTime, quotaRefresh);
 quotaMenu.append(quotaSummary, quotaPanel);
 $("#deskMenu").before(quotaMenu);
 let quotaPending = false,
-  quotaChecked = 0;
+  quotaChecked = 0,
+  quotaEpoch = 0;
 function quotaDuration(mins) {
   return mins % 1440 === 0
     ? `${mins / 1440} 天`
@@ -323,19 +324,34 @@ async function refreshQuota(manual = false) {
     return;
   quotaPending = true;
   quotaRefresh.disabled = true;
+  const name = current?.name || "",
+    epoch = quotaEpoch;
   try {
-    renderQuota(await api("/api/account/quota", { signal: AbortSignal.timeout(8000) }));
+    const result = await api(
+      "/api/account/quota" + (name ? "?session=" + encodeURIComponent(name) : ""),
+      { signal: AbortSignal.timeout(8000) },
+    );
+    if ((current?.name || "") !== name || epoch !== quotaEpoch) return;
+    renderQuota(result);
+    quotaNote.textContent = (result.label || "原有账号") + " · 账号额度，不是上下文剩余";
     quotaChecked = Date.now();
   } catch {
-    quotaSummary.textContent = "额度";
-    quotaTime.textContent = "暂时无法更新额度，请稍后重试。";
-    quotaRows.replaceChildren();
+    if (epoch === quotaEpoch) {
+      quotaSummary.textContent = "额度";
+      quotaTime.textContent = "暂时无法更新额度，请稍后重试。";
+      quotaRows.replaceChildren();
+    }
   } finally {
     quotaPending = false;
     quotaRefresh.disabled = false;
+    if (epoch !== quotaEpoch) void refreshQuota(true);
   }
 }
 quotaRefresh.onclick = () => void refreshQuota(true);
+$("#quotaShortcut").onclick = () => {
+  quotaMenu.open = true;
+  void refreshQuota();
+};
 quotaMenu.addEventListener("toggle", () => {
   if (quotaMenu.open) {
     $("#deskMenu").open = false;
@@ -393,6 +409,12 @@ const previewView = new DeskPreview({
       ...(signal ? { signal } : {}),
     }),
   notify: toast,
+  transcribe: (body, signal) =>
+    api("/api/voice/transcribe", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+    }),
 });
 const chatView = new DeskChat({
   request: async (item, query, signal) => {
@@ -453,6 +475,19 @@ const chatView = new DeskChat({
   },
 });
 const sessionView = new DeskSessions();
+const guardianDesk = new DeskGuardian({ api, notify: toast });
+const accountDesk = new DeskAccounts({
+  api,
+  current: () => current,
+  binding: () => chatView.binding,
+  onSwitch: (item) => {
+    quotaEpoch++;
+    quotaChecked = 0;
+    quotaSummary.textContent = "额度";
+    quotaRows.replaceChildren();
+    void refreshQuota(true);
+  },
+});
 const completionStates = new Map();
 const seenFinals = new Map(),
   seenBatchFinals = new Map(),
@@ -469,6 +504,7 @@ function latestFinal(result) {
 function vibrateOnce(key, marker) {
   if (notifiedFinals.get(key) === marker) return;
   notifiedFinals.set(key, marker);
+  if (guardianDesk.handlesNotifications(key.split(":")[0])) return;
   if (document.hidden || navigator.userActivation?.hasBeenActive === false) return;
   try {
     navigator.vibrate?.([180, 80, 180]);
@@ -696,6 +732,8 @@ function stopTerminal() {
   setWrite(false);
 }
 function showLogin() {
+  guardianDesk.reset();
+  accountDesk.reset();
   stopTerminal();
   chatView.reset();
   completionStates.clear();
@@ -798,6 +836,11 @@ async function route() {
   const name = location.pathname.match(/^\/s\/([a-z0-9_-]+)$/)?.[1];
   sessions.sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0));
   current = sessions.find((s) => s.name === name) || null;
+  quotaChecked = 0;
+  quotaSummary.textContent = "额度";
+  quotaRows.replaceChildren();
+  void accountDesk.refreshSession();
+  void refreshQuota(true);
   sessionView.update(sessions, current);
   sessionView.navigated();
   document.body.classList.remove("terminal-mode", "chat-mode", "workspace-mode");
@@ -1595,7 +1638,7 @@ async function initialize() {
   bootstrapFailed = false;
   $("#retryConnection").classList.add("hidden");
   $("#githubLogin").disabled = true;
-  $("#loginMessage").textContent = "正在连接Codock…";
+  $("#loginMessage").textContent = "正在连接 Codock…";
   try {
     let b;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -1613,7 +1656,7 @@ async function initialize() {
     $("#githubLogin").disabled = !b.methods.github;
     $("#githubLogin").classList.toggle("hidden", Boolean(b.methods.local));
     $("#githubNote").classList.toggle("hidden", Boolean(b.methods.local));
-    $("#githubNote").textContent = "仅限 " + b.githubOwner + " · 无需Codock动态验证码";
+    $("#githubNote").textContent = "仅限 " + b.githubOwner + " · 无需额外动态验证码";
     $("#loginForm").classList.toggle("hidden", !b.methods.local);
     $("#loginButton").disabled = !b.methods.local;
     if (!b.authenticated) {

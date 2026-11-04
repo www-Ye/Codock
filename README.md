@@ -20,7 +20,9 @@ English · [简体中文](README.zh-CN.md)
 - **See the result** — HTML, images and video, one preview per session.
 - **Make it yours** — Three palettes, four animated companions. Tap for a gesture and a bubble, or turn them off.
 - **More than Codex** — Claude Code conversations, in-chat questions and interrupts, session activity, CPU/memory/GPU monitoring, and Codex quota when available.
-- **Speak naturally** — Tap or hold to dictate with optional local CPU speech recognition; text stays in your draft. [Set up voice →](docs/VOICE.en.md)
+- **Keep accounts together** — Save multiple Codex logins locally, switch the shared account after current work finishes, and see quota reset times.
+- **Follow the finish** — Ask the task assistant to follow work and notify you at meaningful milestones.
+- **Speak naturally** — Tap or hold for local CPU dictation, including mixed Chinese and English; text stays in your draft. [Set up voice →](docs/VOICE.en.md)
 
 ### From chat to a live page
 

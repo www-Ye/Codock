@@ -20,6 +20,8 @@ test("deployment config fails closed and brand strings are escaped", () => {
     { origin: "https://terminal.example.com/path" },
     { previewSuffix: "example.com" },
     { socket: "relative" },
+    { accountsRoot: "relative" },
+    { guardianModel: "" },
     { projectRoot: "/" },
     { allowed: ["dev", "dev"] },
     { allowed: ["../bad"] },
@@ -44,6 +46,8 @@ test("GitHub mode never falls back to password when GitHub config is absent; cha
   const dir = await mkdtemp(process.env.TMPDIR + "/conf-");
   const desk = await createDesk({
     runtime: dir,
+    codexHome: dir + "/codex",
+    claudeHome: dir + "/claude",
     allowed: [],
     secure: false,
     authMode: "github",

@@ -12,6 +12,89 @@ import { ChatInteraction, parseQuestion } from "../lib/chat-interaction.mjs";
 const exec = promisify(execFile);
 const binding = "123:456:11111111-1111-1111-1111-111111111111";
 
+test(
+  "history branch replacement discards stale bubbles, preserves drafts and paginates the new branch",
+  { timeout: 30000 },
+  async (t) => {
+    const dir = await mkdtemp(process.env.TMPDIR + "/branch-chat-");
+    let branch = "old";
+    const desk = await createDesk({
+      runtime: dir + "/runtime",
+      codexHome: dir + "/runtime" + "/codex",
+      claudeHome: dir + "/runtime" + "/claude",
+      socket: dir + "/absent.sock",
+      allowed: ["sandbox"],
+      secure: false,
+      chatDependencies: {
+        read: async (input) => {
+          const reset = input.historyVersion !== branch;
+          const end = reset ? 60 : (input.before ?? 60);
+          const messages = Array.from({ length: Math.min(20, end - 1) }, (_, i) => ({
+            id: String(end - 20 + i),
+            role: "assistant",
+            phase: "final_answer",
+            text: branch + " " + (end - 20 + i),
+            time: 1700000000000 + (end - 20 + i) * 1000,
+          }));
+          return {
+            available: true,
+            binding,
+            historyVersion: branch,
+            historyReset: reset,
+            revision: "60",
+            messages,
+            before: end > 40 ? end - 20 : null,
+          };
+        },
+      },
+    });
+    desk.registry.items.sandbox = {
+      name: "sandbox",
+      label: "branch",
+      identity: "fixture",
+      preview: null,
+      revision: 1,
+    };
+    desk.registry.live = async () => [
+      { name: "sandbox", identity: "fixture", id: "$1", windows: 1, attached: 0 },
+    ];
+    desk.registry.command = async (args) => (args[0] === "capture-pane" ? "› " : "%1\t123\t30\t0");
+    await new Promise((r) => desk.server.listen(0, "127.0.0.1", r));
+    t.after(() => desk.close());
+    const origin = "http://127.0.0.1:" + desk.server.address().port;
+    desk.config.origin = origin;
+    const browser = await chromium.launchPersistentContext(dir + "/profile", {
+      executablePath: process.env.CHROME_BIN || chromium.executablePath(),
+      headless: true,
+      viewport: { width: 390, height: 844 },
+      args: ["--no-sandbox", "--disable-dev-shm-usage"],
+      env: { ...process.env, TMPDIR: dir },
+    });
+    t.after(() => browser.close());
+    const [name, value] = desk.auth
+      .cookie(desk.auth.issue({ login: "fixture" }))
+      .split(";")[0]
+      .split("=");
+    await browser.addCookies([{ name, value, url: origin, httpOnly: true, sameSite: "Strict" }]);
+    const page = browser.pages()[0],
+      errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(origin + "/s/sandbox");
+    await page.getByText("old 59", { exact: true }).waitFor();
+    await page.fill("#chatDraft", "保留我的草稿");
+    branch = "new";
+    await page.getByText("new 59", { exact: true }).waitFor();
+    assert.equal(await page.getByText("old 59", { exact: true }).count(), 0);
+    assert.equal(await page.inputValue("#chatDraft"), "保留我的草稿");
+    assert.equal(await page.locator(".chat-message").count(), 20);
+    await page.click("#chatOlder");
+    await page.getByText("new 20", { exact: true }).waitFor();
+    assert.equal(await page.locator(".chat-message").count(), 40);
+    assert.equal(await page.getByText("old 40", { exact: true }).count(), 0);
+    assert.deepEqual(errors, []);
+  },
+);
+
 test("live indicator observes TUI cues, never process liveness or stale history", async () => {
   const state = (text) => terminalStatus(text, { checkedAt: 100 }).state;
   assert.equal(state("• Working (1m 12s • esc to interrupt)\n\n› "), "running");
@@ -75,7 +158,7 @@ test("live indicator observes TUI cues, never process liveness or stale history"
     command: async (args, limit) => {
       commands++;
       assert.equal(args[0], "capture-pane");
-      assert.equal(limit, 32768);
+      assert.equal(limit, 1024 * 1024);
       return "• Working (3s • esc to interrupt)\n› ";
     },
   };
@@ -243,6 +326,8 @@ test(
     let sends = 0;
     const desk = await createDesk({
       runtime: dir + "/runtime",
+      codexHome: dir + "/runtime" + "/codex",
+      claudeHome: dir + "/runtime" + "/claude",
       socket: dir + "/absent.sock",
       allowed: ["sandbox"],
       secure: false,
@@ -442,6 +527,8 @@ test(
     };
     const desk = await createDesk({
       runtime: dir + "/runtime",
+      codexHome: dir + "/runtime" + "/codex",
+      claudeHome: dir + "/runtime" + "/claude",
       socket: dir + "/absent.sock",
       allowed: ["sandbox", "notes"],
       secure: false,
@@ -969,6 +1056,7 @@ test(
     delay = 100;
     revision = "42";
     await page.evaluate(() => void chatView.load());
+    await page.locator("#deskMenu > summary").click();
     await page.click('[data-tab="settings"]');
     await page.waitForTimeout(150);
     assert(await page.locator("#chatPanel").isHidden());
@@ -1135,6 +1223,7 @@ test(
     messages.find((m) => m.id === "67").status = "failed";
     revision = "69";
     await page.evaluate(() => chatView.load());
+    await page.locator(".event-state[data-state=failed]").waitFor();
     assert.equal(await page.locator(".event-state[data-state=failed]").count(), 1);
     assert(
       await page.locator(".activity-group").evaluate((e) => e.open),
@@ -1563,6 +1652,7 @@ test(
       0,
       "opening an existing conversation does not notify for old history",
     );
+    await page.locator("#deskMenu > summary").click();
     await page.click('[data-tab="settings"]');
     await page.click("#testVibration");
     assert.match(await page.locator("#vibrationStatus").textContent(), /已请求|不支持|未允许/);

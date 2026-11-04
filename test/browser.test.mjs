@@ -48,10 +48,12 @@ test(
     await mkdir(dir + "/project/site", { recursive: true });
     await writeFile(
       dir + "/project/site/index.html",
-      await readFile(new URL("../examples/duck-page/index.html", import.meta.url)),
+      await readFile(new URL("./fixtures/preview.html", import.meta.url)),
     );
     const desk = await createDesk({
       runtime: dir + "/runtime",
+      codexHome: dir + "/runtime" + "/codex",
+      claudeHome: dir + "/runtime" + "/claude",
       socket,
       projectRoot: dir + "/project",
       allowed: ["sandbox", "other"],
@@ -502,6 +504,7 @@ test(
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.screenshot({ path: dir + "/terminal-desktop.png", fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator("#deskMenu > summary").click();
     await page.click('[data-tab="settings"]');
     await page.selectOption("#previewType", "static");
     await page.fill("#directory", "site");
@@ -532,6 +535,7 @@ test(
       await page.setViewportSize(size);
       let baseline;
       for (const name of ["chat", "preview", "terminal", "settings"]) {
+        if (name === "settings") await page.locator("#deskMenu > summary").click();
         await page.click(`[data-tab="${name}"]`);
         await page.locator("#" + name + "Panel").waitFor({ state: "visible" });
         if (name === "terminal")
@@ -542,7 +546,7 @@ test(
             return [r.x, r.y, r.width, r.height].map((v) => Math.round(v * 10) / 10);
           };
           return {
-            tabs: [...document.querySelectorAll("[data-tab]")].map(rect),
+            tabs: [...document.querySelectorAll(".tabs [data-tab]")].map(rect),
             panelTop: rect(document.querySelector("#" + name + "Panel"))[1],
           };
         }, name);
@@ -560,7 +564,6 @@ test(
           '[data-tab="chat"]',
           '[data-tab="preview"]',
           '[data-tab="terminal"]',
-          '[data-tab="settings"]',
         ]) {
           const box = await page.locator(selector).boundingBox();
           assert(
@@ -687,7 +690,7 @@ test(
     await page.unroute("**/slow-image.png");
     await writeFile(
       dir + "/project/site/index.html",
-      await readFile(new URL("../examples/duck-page/index.html", import.meta.url)),
+      await readFile(new URL("./fixtures/preview.html", import.meta.url)),
     );
     // Abort the first grant; exactly one retry recovers. Repeated tab taps dedupe.
     let attempts = 0;

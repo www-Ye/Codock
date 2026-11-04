@@ -177,6 +177,23 @@ class DeskDictation {
       end = document.activeElement === draft ? draft.selectionEnd : before.length;
     const serial = ++this.serial,
       language = "auto";
+    // Only a handful of visible technical terms; no full chat or prompt is sent.
+    const context = [
+      this.chat.item?.name || "",
+      before,
+      ...[...this.chat.nodes.values()].slice(-6).map((n) => n.record?.text || ""),
+    ]
+      .join(" ")
+      .slice(0, 6000);
+    const vocabulary = [
+      ...new Set(
+        (context.match(/\b[A-Za-z][A-Za-z0-9_+.#-]{1,39}\b/g) || []).filter(
+          (w) =>
+            /[A-Z].*[A-Z]|[a-z][A-Z]|[0-9_+#.-]/.test(w) ||
+            ["tmux", "checkpoint", "sim2real", "blender", "data"].includes(w.toLowerCase()),
+        ),
+      ),
+    ].slice(0, 8);
     this.say("正在打开麦克风…", "opening");
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
       this.say("此浏览器不支持录音，请用手机键盘上的麦克风。", "error");
@@ -228,7 +245,12 @@ class DeskDictation {
     this.button.classList.add("listening");
     this.button.setAttribute("aria-label", "结束听写");
     this.button.title = "结束听写";
-    this.say(held ? "正在录音…松开即识别。" : "正在录音…再点麦克风结束，最多 25 秒。", "listening");
+    this.say(
+      held
+        ? "正在录音…支持中英文混说，松开即识别。"
+        : "正在录音…支持中英文混说，再点结束（最多 25 秒）。",
+      "listening",
+    );
     recorder.ondataavailable = (event) => {
       if (event.data?.size) {
         chunks.push(event.data);
@@ -256,7 +278,7 @@ class DeskDictation {
         if (serial !== this.serial) return;
         this.controller = new AbortController();
         const result = await this.chat.transcribe(
-          { mime, language, data, mode: "accurate" },
+          { mime, language, data, mode: "accurate", vocabulary },
           this.controller.signal,
         );
         if (
@@ -422,7 +444,7 @@ class DeskChat {
     this.runBadge.title =
       state === "unknown"
         ? "当前状态未能确认，可打开原终端查看。"
-        : "根据原终端当前界面提示判断，约每 4 秒更新；不是消息发送回执。";
+        : "根据原终端当前界面提示更新；不是消息发送回执。";
     this.runBadge.setAttribute("aria-label", labels[state]);
     const attention = document.querySelector("#chatAttention");
     attention.classList.toggle(
@@ -478,6 +500,7 @@ class DeskChat {
       binding: this.binding,
       revision: this.revision,
       before: this.before,
+      historyVersion: this.historyVersion,
       messages: [...this.nodes].map(([id, node]) => ({ id, record: node.record })),
     });
     if (this.views.size > 24) this.views.delete(this.views.keys().next().value);
@@ -645,6 +668,7 @@ class DeskChat {
       const result = await this.send(item, {
         identity: item.identity,
         binding,
+        historyVersion: this.historyVersion,
         text,
         requestId: out.requestId,
         confirm: true,
@@ -795,11 +819,13 @@ class DeskChat {
     this.binding = null;
     this.revision = null;
     this.before = null;
+    this.historyVersion = null;
     const cached = this.views.get(this.cacheKey(item));
     if (cached) {
       this.binding = cached.binding;
       this.revision = cached.revision;
       this.before = cached.before;
+      this.historyVersion = cached.historyVersion;
       for (const { id, record } of cached.messages) {
         const node = document.createElement("article");
         node.dataset.id = id;
@@ -1060,12 +1086,15 @@ class DeskChat {
         }[out.state] || "送达待核对";
       node.querySelector(".chat-message-head").append(status);
       if (out.state === "unknown") {
+        const reason = document.createElement("p");
+        reason.className = "micro";
+        reason.textContent = out.message || "尚未确认是否提交，请先查看终端，避免重复发送。";
         const release = document.createElement("button");
         release.className = "quiet release-unknown";
-        release.textContent = "结束核对";
-        release.title = "核对原终端后解除发送锁定；保留这条记录，不自动重发";
+        release.textContent = "仅解除发送锁定";
+        release.title = "保留这条记录；不会按回车或重发消息";
         release.onclick = () => void this.releaseUnknown(out, release);
-        node.append(release);
+        node.append(reason, release);
       }
       if (out.state === "failed") {
         const reason = document.createElement("p");
@@ -1115,6 +1144,8 @@ class DeskChat {
     clearTimeout(this.timer);
     this.busy = true;
     this.older.disabled = true;
+    const started = performance.now();
+    let received = false;
     const serial = this.serial,
       controller = new AbortController();
     this.controller = controller;
@@ -1131,6 +1162,7 @@ class DeskChat {
     const timeout = setTimeout(() => controller.abort(), 11000);
     const query = new URLSearchParams({ identity: this.item.identity });
     if (this.binding) query.set("binding", this.binding);
+    if (this.historyVersion) query.set("historyVersion", this.historyVersion);
     const pending = this.outgoing.get(this.key());
     if (pending && !pending.observed && pending.state !== "failed")
       query.set("receipt", pending.requestId);
@@ -1139,6 +1171,7 @@ class DeskChat {
     try {
       const result = await this.request(this.item, query, controller.signal);
       if (serial !== this.serial) return;
+      received = Boolean(result.available);
       this.runtime(result.runtime);
       if (!result.available) {
         if (["changed", "format"].includes(result.reason)) {
@@ -1176,6 +1209,20 @@ class DeskChat {
         return;
       }
       this.binding = result.binding;
+      if (
+        result.historyVersion &&
+        (result.historyReset || this.historyVersion !== result.historyVersion)
+      ) {
+        this.views.delete(this.cacheKey(this.item));
+        this.nodes.clear();
+        this.groups.clear();
+        this.messages.replaceChildren();
+        this.layoutKey = null;
+        this.before = null;
+        this.revision = null;
+        older = false;
+      }
+      this.historyVersion = result.historyVersion || null;
       this.readOnly = Boolean(result.readOnly);
       this.verified = !this.readOnly;
       const receipts = this.sent.get(this.key()) || new Map();
@@ -1304,10 +1351,16 @@ class DeskChat {
       }
     } finally {
       clearTimeout(timeout);
+      // One request at a time, measured from its start rather than adding a
+      // fixed four-second pause after every response. Back off on failures.
       if (serial === this.serial) {
         this.busy = false;
         this.older.disabled = false;
-        if (this.active && !document.hidden) this.timer = setTimeout(() => this.load(), 4000);
+        if (this.active && !document.hidden)
+          this.timer = setTimeout(
+            () => this.load(),
+            received ? Math.max(250, 1200 - (performance.now() - started)) : 4000,
+          );
       }
     }
   }

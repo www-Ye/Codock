@@ -4,6 +4,40 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { Auth, base32, totp, credentials } from "../lib/auth.mjs";
 import { SessionUsage } from "../lib/session-usage.mjs";
 import { createDesk } from "../server.mjs";
+import { Registry } from "../lib/registry.mjs";
+test("newly allowed sessions enroll without rebinding old sessions or exposing others", async () => {
+  const dir = await mkdtemp(process.env.TMPDIR + "/enroll-");
+  const existing = {
+    name: "kept",
+    label: "Keep my label",
+    identity: "old",
+    preview: { type: "static", directory: "site", entry: "index.html" },
+    revision: 4,
+  };
+  await writeFile(dir + "/sessions.json", JSON.stringify({ kept: existing }));
+  const registry = new Registry({
+    socket: dir + "/absent.sock",
+    file: dir + "/sessions.json",
+    root: dir,
+    allowed: ["kept", "new", "offline"],
+  });
+  registry.live = async () => [
+    { name: "kept", identity: "changed" },
+    { name: "new", identity: "new-id" },
+    { name: "private", identity: "private-id" },
+  ];
+  await registry.init();
+  assert.deepEqual(registry.items.kept, existing);
+  assert.equal(registry.items.new.identity, "new-id");
+  assert.equal(registry.items.new.preview, null);
+  assert.equal(registry.items.private, undefined);
+  assert.equal(registry.items.offline, undefined);
+  assert.equal((await registry.list()).find((s) => s.name === "kept").state, "rebind");
+  assert.equal((await registry.list()).find((s) => s.name === "new").state, "online");
+  const saved = JSON.stringify(registry.items);
+  await registry.init();
+  assert.equal(JSON.stringify(registry.items), saved);
+});
 
 test("TOTP RFC vector, password strength, login, replay and idle expiry", async () => {
   assert.equal(totp(base32(Buffer.from("12345678901234567890")), 59000), "287082");
@@ -45,6 +79,8 @@ test("recent sessions persist across devices/restarts; passive reads never alter
 
   const desk = await createDesk({
     runtime: dir + "/desk",
+    codexHome: dir + "/desk" + "/codex",
+    claudeHome: dir + "/desk" + "/claude",
     socket: dir + "/absent.sock",
     allowed: ["a", "b"],
     secure: false,

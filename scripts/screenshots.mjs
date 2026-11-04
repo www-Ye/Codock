@@ -98,6 +98,7 @@ async function captureCompanions(browser, demo, output) {
 
 async function exercisePreview(page, demo, output, publish) {
   await page.setViewportSize({ width: 1360, height: 900 });
+  await page.locator("#deskMenu > summary").click();
   await page.click('[data-tab="settings"]');
   await page.click('[data-preset="midnight"]');
   await page.click('[data-tab="chat"]');
@@ -194,6 +195,7 @@ export async function exerciseAppearance({ publish = false } = {}) {
       if (r.method() === "POST" && r.url().endsWith("/chat")) writes++;
     });
     for (const preset of ["graphite", "midnight", "paper"]) {
+      await page.locator("#deskMenu > summary").click();
       await page.click('[data-tab="settings"]');
       await page.click('[data-preset="' + preset + '"]');
       const character = { graphite: "nailong", midnight: "duck", paper: "cat" }[preset];
@@ -257,6 +259,10 @@ export async function exerciseAppearance({ publish = false } = {}) {
     for (const state of ["running", "waiting", "ready", "unknown"]) {
       demo.setStatus(state);
       await page.evaluate(() => chatView.load());
+      await page.waitForFunction(
+        (state) => document.documentElement.dataset.activity === state,
+        state,
+      );
       assert.equal(await page.getAttribute("html", "data-activity"), state);
     }
     await page.emulateMedia({ reducedMotion: "reduce" });
@@ -268,6 +274,7 @@ export async function exerciseAppearance({ publish = false } = {}) {
         .evaluate((n) => getComputedStyle(n).animationName),
       "none",
     );
+    await page.locator("#deskMenu > summary").click();
     await page.click('[data-tab="settings"]');
     await page.uncheck("#mascotToggle");
     await page.reload();
@@ -277,6 +284,7 @@ export async function exerciseAppearance({ publish = false } = {}) {
     assert(await page.locator(".brand .pet-image").isHidden());
     await page.click('[data-tab="chat"]');
     assert(await page.locator(".status-pet").isHidden());
+    await page.locator("#deskMenu > summary").click();
     await page.click('[data-tab="settings"]');
     await page.check("#mascotToggle");
     assert(await page.locator(".pet-sizes").isVisible());
@@ -293,6 +301,7 @@ export async function exerciseAppearance({ publish = false } = {}) {
       await page.click('[data-tab="chat"]');
       assert.equal((await page.locator(".status-pet").boundingBox()).width, width);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await page.locator("#deskMenu > summary").click();
       await page.click('[data-tab="settings"]');
     }
     await page.click('button[data-pet-size="medium"]');
@@ -324,6 +333,10 @@ export async function exerciseAppearance({ publish = false } = {}) {
     ]) {
       demo.setStatus(state);
       await page.evaluate(() => chatView.load());
+      await page.waitForFunction(
+        (state) => document.documentElement.dataset.activity === state,
+        state,
+      );
       await page.locator(".status-pet").click();
       assert.match(await page.locator(".pet-bubble").textContent(), new RegExp(expected));
       const box = await page.locator(".pet-bubble").boundingBox();
@@ -356,6 +369,7 @@ export async function exerciseAppearance({ publish = false } = {}) {
       ["cat", "pet-breathe"],
       ["robot", "pet-float"],
     ]) {
+      await page.locator("#deskMenu > summary").click();
       await page.click('[data-tab="settings"]');
       await page.click('[data-pet="' + character + '"]');
       await page.waitForFunction(() => !document.documentElement.dataset.petPlay);
@@ -384,6 +398,7 @@ export async function exerciseAppearance({ publish = false } = {}) {
       };
     });
     await page.reload();
+    await page.locator("#deskMenu > summary").click();
     await page.click('[data-tab="settings"]');
     await page.waitForSelector("#mascotToggle");
     await page.click('[data-preset="paper"]');

@@ -19,6 +19,40 @@ ACTION_TYPES = {
     "contextCompaction": "整理上下文", "enteredReviewMode": "开始评审", "exitedReviewMode": "结束评审",
 }
 VISIBLE_TYPES = ["userMessage", "agentMessage", *ACTION_TYPES]
+HISTORY_STORAGE_ROOT = Path(__file__).resolve().parents[3] / '.codex-storage'
+
+
+def rollout_path(home, filename):
+    """Only registered history entries, including workspace storage migration.
+
+    Keep the logical sessions path as the authority, even when Codex stores a
+    migrated file's canonical path in SQLite after resuming it.
+    """
+    logical = Path(os.path.abspath(filename))
+    roots = [home / name for name in ('sessions', 'archived_sessions')]
+    if logical.suffix != '.jsonl':
+        raise ValueError('history path')
+    actual = logical.resolve(strict=True)
+    local = any(actual.is_relative_to(root.resolve()) for root in roots)
+    migrated = actual.is_relative_to(HISTORY_STORAGE_ROOT.resolve()) and actual.name == logical.name
+    registered = any(logical.is_relative_to(root) for root in roots)
+    if not registered and logical == actual:
+        registered = local
+        # Migration retains YYYY/MM/DD/name and a link in this account's
+        # sessions tree. Check that exact link; never scan other accounts or
+        # accept every file under the shared storage directory.
+        relative = Path(*actual.parts[-4:])
+        if migrated and re.fullmatch(r'\d{4}/\d{2}/\d{2}/[^/]+\.jsonl', relative.as_posix()):
+            for root in roots:
+                try:
+                    if (root / relative).resolve(strict=True) == actual:
+                        registered = True
+                        break
+                except (OSError, RuntimeError):
+                    continue
+    if not registered or not (local or migrated):
+        raise ValueError('history storage path')
+    return actual
 
 
 def redact(text):
@@ -148,7 +182,12 @@ def locate(pane_pid, home):
 def resume_from_argv(command_line):
     """Identify only the saved thread named by an exact CLI resume launch."""
     args = [part.decode("utf-8", "replace") for part in command_line.split(b"\0") if part]
-    if len(args) != 3 or Path(args[0]).name != "codex" or args[1] != "resume" or not UUID.fullmatch(args[2]):
+    if len(args) < 3 or Path(args[0]).name != "codex" or args[1] != "resume" or not UUID.fullmatch(args[2]):
+        return None
+    # Account handoff launches may include explicit inherited configuration.
+    # No trailing prompt or other subcommand is accepted as a resume identity.
+    extra = args[3:]
+    if len(extra) % 2 or any(extra[i] not in ('-c', '--config') or '=' not in extra[i + 1] for i in range(0, len(extra), 2)):
         return None
     return args[2]
 
@@ -225,20 +264,92 @@ def visible(row):
             "truncated": len(text) > 32000, "time": row["created_at_ms"]}
 
 
-def read_history(home, thread, before=None, revision=None, lookup=None):
+def history_segments(home, thread, rollout):
+    """Resolve the current projection and inherited prefix, never a sibling tail.
+
+    New Codex rollouts keep the public thread id in the header, but use a
+    suffix UUID as their SQLite projection key. history_base bounds inheritance.
+    Read only headers; leave Codex files and databases untouched.
+    """
+    maximum = 9223372036854775807
+    if not rollout:
+        return [(thread, 0, maximum)]
+
+    def header(filename):
+        p = rollout_path(home, filename)
+        match = re.search(r'([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.jsonl$', p.name)
+        if not match or not stat.S_ISREG(p.stat().st_mode):
+            raise ValueError('history projection')
+        with p.open('rb') as f:
+            line = f.readline(2*1024*1024)
+        if not line.endswith(b'\n'):
+            raise ValueError('history header')
+        record = json.loads(line)
+        meta = record.get('payload', {})
+        if record.get('type') != 'session_meta' or not UUID.fullmatch(str(meta.get('id', ''))):
+            raise ValueError('history header')
+        return match[1], meta
+
+    storage, meta = header(rollout)
+    if meta['id'] != thread:
+        raise ValueError('history identity')
+    segments, seen, upper = [], set(), maximum
+    while True:
+        if storage in seen or len(seen) >= 64:
+            raise ValueError('history ancestry')
+        seen.add(storage)
+        base = meta.get('history_base')
+        if not base:
+            segments.append((storage, 0, upper))
+            break
+        parent, cut = base.get('thread_id'), base.get('end_ordinal_exclusive')
+        if not isinstance(parent, str) or not UUID.fullmatch(parent) or type(cut) is not int or not 0 <= cut <= upper:
+            raise ValueError('history boundary')
+        segments.append((storage, cut, upper))
+        if parent == storage:
+            raise ValueError('history cycle')
+        candidates = []
+        for folder in ('sessions', 'archived_sessions'):
+            for pattern in (f'*/*/*/rollout-*-{parent}.jsonl', f'*/*/*/rollout-*_{parent}.jsonl'):
+                candidates.extend((home / folder).glob(pattern))
+        candidates = list({p.resolve(): p for p in candidates}.values())
+        if len(candidates) != 1:
+            raise ValueError('history parent missing or ambiguous')
+        storage, meta = header(candidates[0])
+        if storage != parent:
+            raise ValueError('history parent')
+        upper = cut
+    return segments
+
+
+def history_scope(segments, alias=''):
+    prefix = alias + '.' if alias else ''
+    sql = ' OR '.join(f'({prefix}thread_id=? AND {prefix}rollout_ordinal>=? AND {prefix}rollout_ordinal<?)' for _ in segments)
+    return '(' + sql + ')', tuple(value for segment in segments for value in segment)
+
+
+def read_history(home, thread, before=None, revision=None, lookup=None, segments=None):
+    segments = segments or [(thread, 0, 9223372036854775807)]
     with database(home, "thread_history_1.sqlite") as db:
         db.execute("BEGIN")
+        # Keep each range on its thread index; a large inherited prefix must
+        # not become a full-history OR/sort on every live poll.
+        def rows_for(columns, condition='', values=(), order='rollout_ordinal', count=81):
+            rows = []
+            for segment in segments:
+                rows.extend(db.execute(f'SELECT {columns} FROM thread_items WHERE thread_id=? AND rollout_ordinal>=? AND rollout_ordinal<? {condition} ORDER BY {order} DESC LIMIT ?', (*segment, *values, count)).fetchall())
+            return sorted(rows, key=lambda row: row[order], reverse=True)[:count]
         if lookup:
-            rows = db.execute("SELECT rollout_ordinal,created_at_ms,item_type,CASE WHEN length(item_json)<=100000 THEN item_json ELSE NULL END AS item_json FROM thread_items WHERE thread_id=? AND item_type='userMessage' AND created_at_ms>=? ORDER BY rollout_ordinal DESC LIMIT 200", (thread, lookup["since"])).fetchall()
+            rows = rows_for("rollout_ordinal,created_at_ms,item_type,CASE WHEN length(item_json)<=100000 THEN item_json ELSE NULL END AS item_json", "AND item_type='userMessage' AND created_at_ms>=?", (lookup['since'],), count=200)
             matches = [m for row in rows if (m := visible(row)) and m["role"] == "user" and m["text"] == lookup["text"] and not m.get("truncated")]
             return {"matches": matches[:20]}
-        last = db.execute("SELECT updated_at_ordinal FROM thread_items WHERE thread_id=? ORDER BY updated_at_ordinal DESC LIMIT 1", (thread,)).fetchone()
-        stamp = str(last[0]) if last else "0"
+        last = rows_for('updated_at_ordinal', order='updated_at_ordinal', count=1)
+        stamp = str(last[0][0]) if last else "0"
         if before is None and revision == stamp:
             return {"unchanged": True, "revision": stamp}
         limit = before if before is not None else 9223372036854775807
         marks = ','.join('?' for _ in VISIBLE_TYPES)
-        rows = db.execute(f"SELECT rollout_ordinal,created_at_ms,item_type,CASE WHEN length(item_json)<=524288 THEN item_json ELSE NULL END AS item_json FROM thread_items WHERE thread_id=? AND rollout_ordinal<? AND item_type IN ({marks}) ORDER BY rollout_ordinal DESC LIMIT 81", (thread, limit, *VISIBLE_TYPES)).fetchall()
+        rows = rows_for("rollout_ordinal,created_at_ms,item_type,CASE WHEN length(item_json)<=524288 THEN item_json ELSE NULL END AS item_json", f"AND rollout_ordinal<? AND item_type IN ({marks})", (limit, *VISIBLE_TYPES))
         messages, budget, consumed, public_count = [], 0, [], 0
         for row in rows[:80]:
             message = visible(row)
@@ -312,9 +423,7 @@ def read_legacy(home, thread, rollout, before=None, revision=None, window_bytes=
     one bounded window plus the identity header. An oversized/partial record is
     never parsed, and an older cursor still advances through empty windows.
     """
-    path = Path(rollout).resolve(strict=True)
-    if not any(path.is_relative_to(home / name) for name in ("sessions", "archived_sessions")) or path.suffix != ".jsonl":
-        raise ValueError("rollout path")
+    path = rollout_path(home, rollout)
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as source:
         snapshot = os.fstat(source.fileno())
@@ -467,14 +576,27 @@ def main(request):
         raise ValueError("receipt lookup")
     if request.get("identityOnly") is True:
         result = {}
+    else:
+        try:
+            segments = history_segments(home, thread['id'], thread['rollout_path']) if thread['history_mode'] == 'paginated' else None
+        except (ValueError, OSError):
+            return {'available': False, 'reason': 'history_unavailable'}
+        version = 'projection-v2:' + json.dumps(segments, separators=(',', ':')) if segments else None
+        reset = bool(version and request.get('historyVersion') != version)
+        if reset:
+            before, revision = None, None
+    if request.get('identityOnly') is True:
+        pass
     elif request.get("runtimeOnly") is True:
+        scope, args = history_scope(segments or [(thread['id'], 0, 9223372036854775807)], 'item')
         with database(home, "thread_history_1.sqlite") as db:
-            final = db.execute("SELECT item.rollout_ordinal,turn.completed_at FROM thread_turns AS turn JOIN thread_items AS item ON item.thread_id=turn.thread_id AND item.turn_id=turn.turn_id AND item.item_id=turn.final_agent_item_id WHERE turn.thread_id=? AND turn.status='completed' AND turn.completed_at IS NOT NULL ORDER BY turn.rollout_ordinal DESC LIMIT 1", (thread["id"],)).fetchone()
+            final = db.execute(f"SELECT item.rollout_ordinal,turn.completed_at FROM thread_turns AS turn JOIN thread_items AS item ON item.thread_id=turn.thread_id AND item.turn_id=turn.turn_id AND item.item_id=turn.final_agent_item_id WHERE {scope} AND turn.status='completed' AND turn.completed_at IS NOT NULL ORDER BY item.rollout_ordinal DESC LIMIT 1", args).fetchone()
         result = {"completion": {"id": str(final[0]), "time": int(final[1]) * 1000} if final else None}
     elif thread["history_mode"] == "legacy":
         result = read_legacy(home, thread["id"], thread["rollout_path"], before, revision, lookup=lookup)
     else:
-        result = read_history(home, thread["id"], before, revision, lookup=lookup)
+        result = read_history(home, thread["id"], before, revision, lookup=lookup, segments=segments)
+        result.update(historyVersion=version, historyReset=reset)
     if result.get("available") is False:
         return result
     if locate(int(request["pid"]), home) != (pid, started, locks):

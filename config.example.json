@@ -10,6 +10,7 @@
   "codexHome": "/srv/codock/.codex",
   "claudeHome": "/srv/codock/.claude",
   "chatEnabled": true,
+  "guardianModel": "gpt-6.1-sol",
   "previewPorts": [],
   "brand": {
     "name": "Codock",

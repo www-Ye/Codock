@@ -8,6 +8,8 @@ async function fixture(t, browserTest = false) {
   const dir = await mkdtemp(process.env.TMPDIR + "/pa-");
   const desk = await createDesk({
     runtime: dir + "/runtime",
+    codexHome: dir + "/runtime" + "/codex",
+    claudeHome: dir + "/runtime" + "/claude",
     socket: dir + "/absent.sock",
     projectRoot: process.cwd(),
     allowed: ["demo"],
@@ -100,6 +102,7 @@ test(
       "transport failure is not authentication failure",
     );
     await page.unroute("**/api/activity");
+    await page.locator("#deskMenu > summary").click();
     await page.click('[data-tab="settings"]');
     const before = beats;
     await page.clock.fastForward(120000);

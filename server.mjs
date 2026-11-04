@@ -20,6 +20,9 @@ import { SessionRuntime } from "./lib/session-runtime.mjs";
 import { VoiceAsr } from "./lib/voice-asr.mjs";
 import { SystemStatus } from "./lib/system-status.mjs";
 import { AccountQuota } from "./lib/account-quota.mjs";
+import { AccountPool } from "./lib/account-pool.mjs";
+import { SystemAccount } from "./lib/system-account.mjs";
+import { Guardian } from "./lib/guardian.mjs";
 const root = path.dirname(fileURLToPath(import.meta.url));
 export async function createDesk(options = {}) {
   const config = {
@@ -59,24 +62,42 @@ export async function createDesk(options = {}) {
   await registry.init();
   const terminals = new Terminals(registry, auth, config.runtime),
     previews = new Previews(registry, auth, config);
+  registry.systemAccountApplying = () => terminals.systemAccountApplying;
   const chats = new Chats(registry, {
     home: config.codexHome || path.join(homedir(), ".codex"),
     claudeHome: config.claudeHome || path.join(homedir(), ".claude"),
     writers: terminals.writers,
     ...options.chatDependencies,
   });
+  const accounts = new AccountPool({
+    runtime: config.runtime,
+    root: config.accountsRoot || path.join(config.runtime, "accounts"),
+    defaultHome: chats.home,
+    registry,
+    terminals,
+    chats,
+    ...options.accountDependencies,
+  });
+  await accounts.init();
+  clearInterval(accounts.timer);
+  const systemAccount = new SystemAccount(accounts, options.systemAccountDependencies);
+  await systemAccount.init();
+  chats.homeFromMeta = (meta) => accounts.homeFromMeta(meta);
   const chatSender = new ChatSender(chats, config.runtime, {
     terminals,
     ...options.chatSendDependencies,
   });
+  terminals.accountDeliveryPending = () => chatSender.running.size > 0;
+  void chatSender.indexReceipts().catch(() => {});
   const chatInteraction = new ChatInteraction(chats, terminals);
   const usage = new SessionUsage(path.join(config.runtime, "session-usage.json"));
   await usage.init();
   const runtimeStatus = new SessionRuntime(registry, {
     home: chats.home,
+    homeFromMeta: (meta) => accounts.homeFromMeta(meta),
     readTurns:
       options.runtimeDependencies?.readTurns ??
-      ((home, socket, panes) =>
+      (async (home, socket, panes) =>
         chats
           .readProcess({
             home,
@@ -89,7 +110,24 @@ export async function createDesk(options = {}) {
   await voiceAsr.init();
   const systemStatus = new SystemStatus(options.systemDependencies);
   await systemStatus.init();
-  const accountQuota = new AccountQuota(chats.home, options.quotaDependencies);
+  const guardianChats = new Chats(registry, {
+    home: chats.home,
+    claudeHome: chats.claudeHome,
+    read: options.chatDependencies?.read,
+    status: chats.status,
+  });
+  guardianChats.homeFromMeta = (meta) => accounts.homeFromMeta(meta);
+  const guardian = new Guardian({
+    runtime: config.runtime,
+    workspace: config.projectRoot,
+    model: config.guardianModel,
+    registry,
+    chats: guardianChats,
+    home: chats.home,
+    ...options.guardianDependencies,
+  });
+  await guardian.init();
+  let accountQuota = new AccountQuota(chats.home, options.quotaDependencies);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 20000, perMessageDeflate: false });
   const assets = {
     "/theme.js": ["public/theme.js", "text/javascript"],
@@ -118,6 +156,10 @@ export async function createDesk(options = {}) {
     });
     res.end(JSON.stringify(data));
   };
+  assets["/accounts.js"] = ["public/accounts.js", "text/javascript"];
+  assets["/accounts.css"] = ["public/accounts.css", "text/css"];
+  assets["/guardian.js"] = ["public/guardian.js", "text/javascript"];
+  assets["/guardian.css"] = ["public/guardian.css", "text/css"];
   async function body(req, limit = 20000) {
     let result = "";
     if (Number(req.headers["content-length"]) > limit)
@@ -262,6 +304,27 @@ export async function createDesk(options = {}) {
         json(res, 200, { ok: true });
         return;
       }
+      if (route === "/api/guardian" && req.method === "GET") {
+        json(res, 200, guardian.view());
+        return;
+      }
+      if (route === "/api/guardian" && req.method === "PATCH") {
+        json(res, 200, await guardian.update(await body(req)));
+        return;
+      }
+      if (route === "/api/guardian/tasks" && req.method === "POST") {
+        json(res, 201, await guardian.register(await body(req)));
+        return;
+      }
+      if (route === "/api/guardian/chat" && req.method === "POST") {
+        json(res, 202, await guardian.ask(await body(req)));
+        return;
+      }
+      if (route === "/api/guardian/chat" && req.method === "DELETE") {
+        await body(req);
+        json(res, 200, await guardian.cancel());
+        return;
+      }
       if (req.method === "POST" && route === "/api/logout") {
         auth.sessions.delete(token);
         for (const c of terminals.clients) if (c.token === token) c.ws.close(1008, "已退出登录");
@@ -293,8 +356,89 @@ export async function createDesk(options = {}) {
         return;
       }
       if (req.method === "GET" && route === "/api/account/quota") {
-        json(res, 200, await accountQuota.snapshot());
+        const name = url.searchParams.get("session"),
+          id = name
+            ? (await accounts.current(name)).account
+            : url.searchParams.get("account") || "default";
+        if (id === "default" && accountQuota.systemSelection !== systemAccount.data.selected) {
+          accountQuota = new AccountQuota(chats.home, options.quotaDependencies);
+          accountQuota.systemSelection = systemAccount.data.selected;
+        }
+        json(
+          res,
+          200,
+          id === "default"
+            ? {
+                ...(await accountQuota.snapshot()),
+                accountId: id,
+                label: systemAccount.data.selected
+                  ? accounts.item(systemAccount.data.selected).label
+                  : "系统账号",
+              }
+            : await accounts.quota(id),
+        );
         return;
+      }
+      if (route === "/api/accounts/system") {
+        if (req.method === "GET") {
+          json(res, 200, await systemAccount.status());
+          return;
+        }
+        if (req.method === "POST") {
+          json(res, 202, await systemAccount.request(await body(req)));
+          return;
+        }
+        if (req.method === "DELETE") {
+          json(res, 200, await systemAccount.cancel((await body(req)).requestId));
+          return;
+        }
+      }
+      if (route === "/api/accounts") {
+        if (req.method === "GET") {
+          json(res, 200, await accounts.list());
+          return;
+        }
+        if (req.method === "POST") {
+          json(res, 201, await accounts.add((await body(req)).label));
+          return;
+        }
+      }
+      const accountMatch = route.match(
+        /^\/api\/accounts\/(default|a_[a-f0-9]{12})(?:\/(login|cancel))?$/,
+      );
+      if (accountMatch) {
+        const [, id, action] = accountMatch;
+        if (req.method === "PATCH" && !action) {
+          json(res, 200, await accounts.rename(id, (await body(req)).label));
+          return;
+        }
+        if (req.method === "POST" && action) {
+          await body(req);
+          json(
+            res,
+            200,
+            action === "login" ? await accounts.login(id) : await accounts.cancelLogin(id),
+          );
+          return;
+        }
+      }
+      const switchMatch = route.match(/^\/api\/sessions\/([a-z0-9_-]+)\/account$/);
+      if (switchMatch && registry.allowed.includes(switchMatch[1])) {
+        const name = switchMatch[1];
+        if (req.method === "GET") {
+          json(res, 200, await accounts.session(name, url.searchParams.get("identity")));
+          return;
+        }
+        if (req.method === "POST") {
+          await body(req);
+          throw Object.assign(Error("账号已改为系统统一切换，请刷新页面后使用「系统账号」"), {
+            status: 409,
+          });
+        }
+        if (req.method === "DELETE") {
+          json(res, 200, await accounts.cancel(name, (await body(req)).requestId));
+          return;
+        }
       }
       const visitMatch = route.match(/^\/api\/sessions\/([a-z0-9_-]+)\/visit$/);
       if (req.method === "POST" && visitMatch && registry.allowed.includes(visitMatch[1])) {
@@ -449,7 +593,13 @@ export async function createDesk(options = {}) {
     systemStatus,
     terminals,
     previews,
+    accounts,
+    systemAccount,
+    guardian,
     close: async () => {
+      await guardian.close();
+      await systemAccount.close();
+      await accounts.close();
       voiceAsr.close();
       terminals.close();
       previews.close();

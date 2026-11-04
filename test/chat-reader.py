@@ -56,6 +56,80 @@ class ReaderTest(unittest.TestCase):
         row["item_json"] = json.dumps({"type": "userMessage", "content": [{"type": "text", "text": text.replace("预览目标 data", "预览目标 paper")}]})
         self.assertEqual(reader.visible(row)["text"], text.replace("预览目标 data", "预览目标 paper"), "不匹配的标记不可隐藏")
 
+    def test_branched_history_keeps_only_inherited_prefix_and_current_projection(self):
+        folder = self.home / 'sessions/2026/10/29'
+        folder.mkdir(parents=True)
+        parent = folder / f'rollout-old-{THREAD}.jsonl'
+        current = folder / f'rollout-new-{THREAD}_{ORPHAN}.jsonl'
+        parent.write_text(json.dumps({'type':'session_meta','payload':{'id':THREAD}})+'\n')
+        current.write_text(json.dumps({'type':'session_meta','payload':{'id':THREAD,'history_base':{'thread_id':THREAD,'end_ordinal_exclusive':30}}})+'\n')
+        with sqlite3.connect(self.home / 'state_5.sqlite') as db:
+            db.execute('UPDATE threads SET rollout_path=? WHERE id=?',(str(current),THREAD))
+        with sqlite3.connect(self.home / 'thread_history_1.sqlite') as db:
+            for i in range(30,56):
+                item={'type':'userMessage','content':[{'type':'text','text':f'current {i}'}]}
+                db.execute('INSERT INTO thread_items VALUES (?,?,?,?,?,?)',(ORPHAN,i,i*1000,json.dumps(item),'userMessage',i))
+        segments=reader.history_segments(self.home,THREAD,str(current))
+        self.assertEqual(segments,[(ORPHAN,30,9223372036854775807),(THREAD,0,30)])
+        # Storage maintenance may relocate a parent without changing history.
+        store=self.home / 'storage-fixture'
+        store.mkdir()
+        moved=store / parent.name
+        parent.rename(moved);parent.symlink_to(moved)
+        with patch.object(reader,'HISTORY_STORAGE_ROOT',store):
+            self.assertEqual(reader.history_segments(self.home,THREAD,str(current)),segments)
+        with self.assertRaises(ValueError):
+            reader.history_segments(self.home,THREAD,str(current))
+        parent.unlink();moved.rename(parent)
+        page=reader.read_history(self.home,THREAD,segments=segments)
+        all_messages=page['messages'];cursor=page['before']
+        while cursor is not None:
+            page=reader.read_history(self.home,THREAD,before=cursor,segments=segments)
+            all_messages=page['messages']+all_messages;cursor=page['before']
+        self.assertEqual([m['id'] for m in all_messages],[str(i) for i in range(1,56)])
+        self.assertEqual(all_messages[29]['text'],'current 30')
+        self.assertNotIn('reply 44',json.dumps(all_messages))
+        self.assertEqual(reader.read_history(self.home,THREAD,lookup={'text':'current 55','since':0},segments=segments)['matches'][0]['id'],'55')
+        self.assertEqual(reader.read_history(self.home,THREAD,lookup={'text':'reply 44','since':0},segments=segments)['matches'],[])
+        request={'home':str(self.home),'pid':123,'binding':f'456:789:{THREAD}','before':10,'historyVersion':'old'}
+        with patch.object(reader,'locate',return_value=(456,'789',{THREAD})):
+            view=reader.main(request)
+            self.assertTrue(view['historyReset']);self.assertEqual(view['messages'][-1]['text'],'current 55')
+            older=reader.main({**request,'before':view['before'],'historyVersion':view['historyVersion']})
+            self.assertFalse(older['historyReset']);self.assertLess(int(older['messages'][-1]['id']),view['before'])
+
+    def test_canonical_migrated_history_requires_this_accounts_original_link(self):
+        relative = Path('2026/09/20') / f'rollout-2026-09-20T15-19-32-{THREAD}.jsonl'
+        original = self.home / 'sessions' / relative
+        store = self.home / 'storage-fixture'
+        moved = store / 'root-sessions' / relative
+        moved.parent.mkdir(parents=True)
+        original.parent.mkdir(parents=True)
+        moved.write_text(json.dumps({'type': 'session_meta', 'payload': {'id': THREAD}}) + '\n')
+        original.symlink_to(moved)
+        with sqlite3.connect(self.home / 'state_5.sqlite') as db:
+            db.execute('UPDATE threads SET rollout_path=? WHERE id=?', (str(moved), THREAD))
+        with patch.object(reader, 'HISTORY_STORAGE_ROOT', store), patch.object(reader, 'locate', return_value=(456, '789', {THREAD})):
+            self.assertEqual(reader.rollout_path(self.home, original), moved)
+            view = reader.main({'home': str(self.home), 'pid': 123})
+            self.assertTrue(view['available'])
+            self.assertEqual(view['messages'][-1]['id'], '45')
+            self.assertFalse(view['readOnly'])
+            original.unlink()
+            with self.assertRaises(ValueError):
+                reader.rollout_path(self.home, moved)
+            other = store / 'another-account' / relative
+            other.parent.mkdir(parents=True)
+            other.write_text(moved.read_text())
+            original.symlink_to(other)
+            with self.assertRaises(ValueError):
+                reader.rollout_path(self.home, moved)
+            original.unlink()
+            archived = self.home / 'archived_sessions' / relative
+            archived.parent.mkdir(parents=True)
+            archived.symlink_to(moved)
+            self.assertEqual(reader.rollout_path(self.home, moved), moved)
+
     def test_mapping_is_root_cli_and_bound_to_process(self):
         request = {"home":str(self.home),"pid":123}
         with patch.object(reader, "locate", return_value=(456,"789",{THREAD,CHILD})):

@@ -82,17 +82,18 @@ test("completion markers are scoped to verified live identities and contain no t
       { name: "a", identity: "a1", id: "$1" },
       { name: "changed", identity: "new", id: "$2" },
     ],
-    command: async () => "%1\t123\t30\t0",
+    command: async () => "%1\t123\t30\t0\ta_fixture",
   };
   let calls = 0;
   const status = new SessionRuntime(registry, {
     home: "/saved-codex",
+    homeFromMeta: (meta) => "/accounts/" + meta.split("\t")[4],
     observe: async () => ({ state: "ready" }),
     readTurns: async (home, socket, panes) => {
       calls++;
       assert.equal(home, "/saved-codex");
       assert.equal(socket, registry.socket);
-      assert.deepEqual(panes, [{ pid: 123, pane: "%1" }]);
+      assert.deepEqual(panes, [{ pid: 123, pane: "%1", name: "a", home: "/accounts/a_fixture" }]);
       return [
         {
           binding: "456:789:11111111-1111-1111-1111-111111111111",

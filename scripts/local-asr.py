@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import os
+import re
 import sys
 import wave
 
@@ -14,7 +15,7 @@ import numpy as np
 import sherpa_onnx
 
 
-def decode(recognizer, raw):
+def decode(recognizer, raw, vocabulary=None):
     if len(raw) < 64 or len(raw) > 900000:
         raise ValueError("invalid audio length")
     with wave.open(io.BytesIO(raw), "rb") as wav:
@@ -25,6 +26,14 @@ def decode(recognizer, raw):
         raise ValueError("invalid audio duration")
     samples = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
     stream = recognizer.create_stream()
+    if vocabulary:
+        # Qwen3 per-stream context supports mixed speech; do not force a
+        # language token, translate text or share hints with the next request.
+        if not isinstance(vocabulary, list) or len(vocabulary) > 16:
+            raise ValueError("invalid recognition vocabulary")
+        if any(not isinstance(w, str) or len(w) > 40 or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_+.#-]*(?: [A-Za-z0-9_+.#-]+){0,2}", w) for w in vocabulary):
+            raise ValueError("invalid recognition term")
+        stream.set_option("hotwords", ",".join(vocabulary))
     stream.accept_waveform(16000, samples)
     recognizer.decode_stream(stream)
     return stream.result.text
@@ -56,7 +65,7 @@ def main():
             raise ValueError("invalid request length")
         request = json.loads(line)
         raw = base64.b64decode(request["wav"], validate=True)
-        print(json.dumps({"text": decode(recognizer, raw)}), flush=True)
+        print(json.dumps({"text": decode(recognizer, raw, request.get("vocabulary") if kind == "qwen3" else None)}), flush=True)
 
 
 if __name__ == "__main__":

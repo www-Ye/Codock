@@ -20,11 +20,29 @@ mv runtime/models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17 runtim
 
 重启 Codock。默认读取 `runtime/asr-env/bin/python` 与 `runtime/models/sensevoice-small-int8/{model.int8.onnx,tokens.txt}`。已有环境可用 `DESK_ASR_PYTHON`、`DESK_ASR_MODEL_DIR` 指定绝对路径；使用 systemd 时写入服务环境，不仅是在交互式 shell 里 export。
 
-可选高精度最终稿：将兼容 sherpa-onnx 的 Qwen3-ASR ONNX 模型放在 `runtime/models/qwen3-asr`，需包含 `conv_frontend.onnx`、`encoder.int8.onnx`、`decoder.int8.onnx`、`tokenizer/vocab.json`。也可设置 `DESK_ASR_QUALITY_MODEL_DIR`。临时识别仍用 SenseVoice；最终稿用 Qwen3，失败回退快速模型。请核对模型许可证与当前 sherpa-onnx 版本，不保证所有口音更准确。
+可选高精度最终稿：将兼容 sherpa-onnx 的 Qwen3-ASR ONNX 模型放在 `runtime/models/qwen3-asr`，需包含 `conv_frontend.onnx`、`encoder.int8.onnx`、`decoder.int8.onnx`、`tokenizer/vocab.json`。也可设置 `DESK_ASR_QUALITY_MODEL_DIR`。临时识别仍用 SenseVoice；最终稿用 Qwen3，失败回退快速模型。中英文混说使用自动语言识别，最终稿带 Codex、tmux、API 等术语提示，不强制翻译或替换原词。请核对模型许可证与当前 sherpa-onnx 版本，不保证所有口音更准确。
 
 ## 部署要点
 
-- 两种引擎均使用 CPU，不占 GPU；进程闲置约 20 秒退出。最长录音 25 秒，同一时刻处理一段。
+- 两种引擎均使用 CPU，不占 GPU；快速模型闲置约 20 秒退出，最终稿模型约 120 秒退出。最长录音 25 秒，同一时刻处理一段。
 - 更新已有 Nginx 时也同步 [配置模板](../deploy/nginx.conf.example)：只有 `/api/voice/transcribe` 需要 `1400k` 请求体额度，其余接口不放宽。
 - 一直“整理中”：先确认 ffmpeg、模型文件、Python 环境和 HTTPS 麦克风权限；反向代理 413 表示上传大小限制未更新。
 - 录音通过内存管道转为 WAV；不默认保存录音，也不发送到第三方语音服务。浏览器自身听写则由浏览器服务决定。
+
+## 给预览页面接入语音
+
+预览页可以声明支持语音，工作台会显示「语音输入」按钮；录音权限只在工作台申请，文字返回给原预览，页面自行填草稿。将下例中的主站域名替换为自己的 `origin`：
+
+```js
+const desk = "https://terminal.example.com";
+parent.postMessage({ type: "codock-preview-voice-ready", enabled: true }, desk);
+window.addEventListener("message", (event) => {
+  if (event.source !== parent || event.origin !== desk) return;
+  const result = event.data;
+  if (result?.type === "codock-preview-voice-result" && result.phase === "done") {
+    document.querySelector("textarea").value = result.text;
+  }
+});
+```
+
+仅当前绑定且来源匹配的预览可接收结果，文字不会自动提交。

@@ -6,21 +6,23 @@
 
 ## 一个执行现场
 
-浏览器通过 HTTPS/WSS 访问一个 Node 服务。聊天读取原 Codex 记录，输入和按键进入原 tmux；不会额外启动模型。预览分离来源，但复用登录授权。网关与工作机同机时直连回环端口，异机时可增加受限反向 SSH 隧道。
+浏览器通过 HTTPS/WSS 访问一个 Node 服务。聊天读取原 Codex 记录，输入和按键进入原 tmux；普通聊天沿用原进程；可选管家会另行调用模型进行只读分析。预览分离来源，但复用登录授权。网关与工作机同机时直连回环端口，异机时可增加受限反向 SSH 隧道。
 
-| 模块                                  | 职责                                                     |
-| ------------------------------------- | -------------------------------------------------------- |
-| `server.mjs`                          | HTTP / WebSocket 路由、精确 Host / Origin 校验、生命周期 |
-| `lib/config.mjs`、`preflight.mjs`     | 配置验证、HTML 转义、品牌默认值、凭据检查                |
-| `lib/auth.mjs`、`github-auth.mjs`     | 本地会话、密码/TOTP 或 GitHub 单账号认证                 |
-| `lib/registry.mjs`                    | 会话白名单、重建身份检测、预览绑定                       |
-| `lib/terminal.mjs`、`history.mjs`     | PTY、输入租约、按键与只读历史                            |
-| `lib/chat.mjs`、`codex-reader.py`     | 进程关联、只读记录与活动规范化                           |
-| `lib/chat-send.mjs`、`chat-input.mjs` | 同线程代送、回执、不确定结果不重放                       |
-| `lib/preview*.mjs`、`control.mjs`     | 预览鉴权、资源/媒体、本地绑定入口                        |
-| `public/`                             | 原生前端；按需加载终端，活动详情展开后挂载               |
+| 模块                                                        | 职责                                                     |
+| ----------------------------------------------------------- | -------------------------------------------------------- |
+| `server.mjs`                                                | HTTP / WebSocket 路由、精确 Host / Origin 校验、生命周期 |
+| `lib/config.mjs`、`preflight.mjs`                           | 配置验证、HTML 转义、品牌默认值、凭据检查                |
+| `lib/auth.mjs`、`github-auth.mjs`                           | 本地会话、密码/TOTP 或 GitHub 单账号认证                 |
+| `lib/registry.mjs`                                          | 会话白名单、重建身份检测、预览绑定                       |
+| `lib/terminal.mjs`、`history.mjs`                           | PTY、输入租约、按键与只读历史                            |
+| `lib/chat.mjs`、`codex-reader.py`                           | 进程关联、只读记录与活动规范化                           |
+| `lib/chat-send.mjs`、`chat-input.mjs`                       | 同线程代送、回执、不确定结果不重放                       |
+| `lib/preview*.mjs`、`control.mjs`                           | 预览鉴权、资源/媒体、本地绑定入口                        |
+| `account-pool.mjs`、`system-account.mjs`、`account-rpc.mjs` | 本地账号保存、共享登录切换、令牌续期                     |
+| `guardian*.mjs`                                             | 发现后台进度、判断重要成果、静默提醒                     |
+| `public/`                                                   | 原生前端；按需加载终端，活动详情展开后挂载               |
 
-主要接口：`/api/bootstrap`、`/api/sessions`、`/api/sessions/:name/chat`、`/api/sessions/:name/preview`、`/ws`。绑定工具走 owner-only Unix socket，不通过公网暴露管理接口。
+账号及管家接口：`/api/accounts`、`/api/accounts/system`、`/api/account/quota`、`/api/guardian`，均需登录。主要接口：`/api/bootstrap`、`/api/sessions`、`/api/sessions/:name/chat`、`/api/sessions/:name/preview`、`/ws`。绑定工具走 owner-only Unix socket，不通过公网暴露管理接口。
 
 ## 兼容性，不装作无所不能
 
@@ -30,7 +32,7 @@
 
 ## 状态与存储
 
-`config.json` 保存实例参数；`runtime/` 保存身份配置、会话绑定、排序和发送回执（可能包含消息正文）。登录及预览授权在内存，服务重启需要重新登录。tmux 保活不等于主机重建后可恢复进程。
+`config.json` 保存实例参数；`runtime/` 保存身份配置、会话绑定、排序和发送回执（可能包含消息正文）。账号登录默认保存在 `runtime/accounts/`，管家状态也属于私有运行数据。登录及预览授权在内存，服务重启需要重新登录。tmux 保活不等于主机重建后可恢复进程。
 
 本实例设计为单进程，不要把同一 socket 接到多个 Node 副本。扩展时使用独立 Linux 用户、实例、端口、域名与 Codex 环境；对不互信的用户还需 VM/容器和网络隔离。
 

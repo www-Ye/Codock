@@ -22,7 +22,7 @@ def main(request):
             if not isinstance(row, dict) or not isinstance(row.get('pid'), int) or row['pid'] < 1 or not re.fullmatch(r'%\d+', str(row.get('pane'))) or not isinstance(row.get('socket'), str):
                 raise ValueError('runtime pane')
             try:
-                view = main({**row, 'home': request['home'], 'claudeHome': request.get('claudeHome', str(Path.home() / '.claude')), 'runtimeOnly': True})
+                view = main({**row, 'home': row.get('home', request['home']), 'claudeHome': request.get('claudeHome', str(Path.home() / '.claude')), 'runtimeOnly': True})
                 marker = view.get('completion') if view.get('available') else None
                 completions.append({'binding': view['binding'], **marker} if marker else None)
             except (ValueError, KeyError, OSError, sqlite3.Error):

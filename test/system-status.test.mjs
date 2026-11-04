@@ -47,6 +47,8 @@ test("system endpoint needs login and GPU failure never blocks CPU/memory", asyn
   const dir = await mkdtemp(process.env.TMPDIR + "/system-");
   const desk = await createDesk({
     runtime: dir + "/runtime",
+    codexHome: dir + "/runtime" + "/codex",
+    claudeHome: dir + "/runtime" + "/claude",
     socket: dir + "/absent.sock",
     allowed: [],
     secure: false,
@@ -81,6 +83,8 @@ test(
     const dir = await mkdtemp(process.env.TMPDIR + "/su-");
     const desk = await createDesk({
       runtime: dir + "/runtime",
+      codexHome: dir + "/runtime" + "/codex",
+      claudeHome: dir + "/runtime" + "/claude",
       socket: dir + "/absent.sock",
       allowed: [],
       secure: false,

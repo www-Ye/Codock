@@ -1,0 +1,197 @@
+.account-toggle {
+  flex-shrink: 0;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  padding: 6px 10px;
+  min-height: 32px;
+}
+.accounts-dialog {
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  width: min(560px, calc(100vw - 24px));
+  max-height: calc(100dvh - 40px);
+  padding: 22px;
+  overflow: auto;
+  box-shadow: 0 20px 80px #0006;
+}
+.accounts-dialog::backdrop {
+  background: #080e0bb8;
+  backdrop-filter: blur(4px);
+}
+.accounts-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.accounts-heading h2 {
+  font-size: 19px;
+}
+.accounts-heading button {
+  font-size: 24px;
+  padding: 2px 10px;
+}
+.account-status {
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 12px 0;
+  color: var(--accent);
+}
+.account-status:empty {
+  display: none;
+}
+.accounts-list {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+.account-card {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.account-card strong {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.account-card p {
+  margin: 4px 0 0;
+}
+.account-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.account-actions button {
+  font-size: 12px;
+  padding: 6px 9px;
+  min-height: 32px;
+}
+.account-current {
+  font-size: 12px;
+  color: var(--accent);
+  padding: 6px;
+}
+.account-login {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.account-login a {
+  font-size: 13px;
+  color: var(--accent);
+}
+.account-login code {
+  font-size: 19px;
+  letter-spacing: 2px;
+  user-select: all;
+}
+.account-login button {
+  font-size: 12px;
+  padding: 6px 9px;
+}
+.accounts-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.accounts-add input {
+  min-width: 0;
+  flex: 1;
+  font-size: 16px;
+}
+.accounts-add button {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.accounts-quota-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+.accounts-quota-tools button {
+  font-size: 12px;
+  min-height: 36px;
+  padding: 5px 8px;
+}
+.account-quota {
+  width: 100%;
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+.account-quota-window {
+  min-width: 0;
+}
+.account-quota-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+.account-quota-line strong {
+  font-weight: 500;
+  color: var(--success);
+}
+.account-quota-line .quota-empty {
+  color: var(--error);
+}
+.account-quota-countdown {
+  display: block;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  margin-top: 3px;
+}
+.account-quota-stale {
+  color: var(--accent);
+}
+.account-quota-extra {
+  display: grid;
+  gap: 8px;
+}
+.account-quota-extra summary {
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.account-quota-extra .account-quota-window {
+  margin: 8px 0;
+}
+@media (max-width: 600px) {
+  .account-toggle {
+    max-width: 75px;
+    padding: 5px 7px;
+    font-size: 11px;
+  }
+  .accounts-dialog {
+    padding: 16px;
+  }
+  .accounts-add {
+    flex-wrap: wrap;
+  }
+  .accounts-add input {
+    width: 100%;
+  }
+  .account-card {
+    padding: 12px;
+  }
+}

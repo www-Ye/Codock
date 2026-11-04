@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Preview fixture</title>
+  <h1>把小小的网页，装进口袋。</h1>
+  <button id="hello">打个招呼</button
+  ><output id="count">0</output>
+  <button id="mode" aria-pressed="false">切换配色</button>
+  <script>
+    document.querySelector("#hello").onclick = () => {
+      document.querySelector("#count").textContent++;
+    };
+    document.querySelector("#mode").onclick = (event) => {
+      const active = event.target.getAttribute("aria-pressed") !== "true";
+      event.target.setAttribute("aria-pressed", String(active));
+      document.body.style.background = active ? "#ddd" : "#fff";
+    };
+  </script>
+</html>

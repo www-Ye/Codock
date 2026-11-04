@@ -19,6 +19,7 @@ const routes = {
   setup: ["scripts/setup.mjs"],
   "setup-github": ["scripts/setup-github.mjs"],
   preview: ["scripts/preview.mjs"],
+  guardian: ["scripts/guardian.mjs"],
   check: ["scripts/check-config.mjs"],
   smoke: ["scripts/smoke.mjs"],
   screenshots: ["scripts/screenshots.mjs"],

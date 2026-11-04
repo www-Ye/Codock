@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { ChatSender } from "../lib/chat-send.mjs";
 
@@ -12,6 +12,58 @@ const message = () => ({
   text: "请继续原来的任务\n第二行",
   confirm: true,
   transport: "terminal-enter",
+});
+
+test("stale history branch cannot send to the current branch", async () => {
+  const runtime = await mkdtemp(process.env.TMPDIR + "/branch-send-");
+  let calls = 0;
+  const sender = new ChatSender(
+    { page: async () => ({ available: true, binding, historyVersion: "new" }) },
+    runtime,
+    {
+      deliver: async (_name, entry) => {
+        calls++;
+        assert.equal(entry.historyVersion, "new");
+        return { state: "submitted" };
+      },
+    },
+  );
+  await assert.rejects(sender.send("sandbox", { ...message(), historyVersion: "old" }), {
+    status: 409,
+  });
+  assert.equal(calls, 0);
+  await sender.send("sandbox", { ...message(), historyVersion: "new" });
+  assert.equal(calls, 1);
+});
+
+test("receipt ownership index keeps states fresh and discovers new files without leaking other sessions", async () => {
+  const runtime = await mkdtemp(process.env.TMPDIR + "/receipt-index-");
+  const sender = new ChatSender({}, runtime, {
+    deliver: async () => {
+      throw Error("must not send");
+    },
+  });
+  await mkdir(sender.directory);
+  const entry = { ...message(), name: "sandbox", created: Date.now(), state: "failed" };
+  const other = { ...entry, requestId: randomUUID(), name: "other" };
+  await writeFile(sender.file(entry.requestId), JSON.stringify(entry));
+  await writeFile(sender.file(other.requestId), JSON.stringify(other));
+  assert.deepEqual(
+    (await sender.recent("sandbox", entry.identity, binding)).map((e) => e.requestId),
+    [entry.requestId],
+  );
+  // Another instance can amend a receipt; the index must not cache its payload.
+  await writeFile(
+    sender.file(entry.requestId),
+    JSON.stringify({ ...entry, dismissedAt: Date.now() }),
+  );
+  const newer = { ...entry, requestId: randomUUID(), created: entry.created + 1 };
+  await writeFile(sender.file(newer.requestId), JSON.stringify(newer));
+  assert.deepEqual(
+    (await sender.recent("sandbox", entry.identity, binding)).map((e) => e.requestId),
+    [newer.requestId],
+  );
+  assert.deepEqual(await sender.recent("sandbox", "different-identity", binding), []);
 });
 
 test("missing receipt recovery durably blocks a late original request, including restart", async () => {

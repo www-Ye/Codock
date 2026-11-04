@@ -14,6 +14,8 @@ test(
     let deliveries = 0;
     const desk = await createDesk({
       runtime: dir + "/runtime",
+      codexHome: dir + "/runtime" + "/codex",
+      claudeHome: dir + "/runtime" + "/claude",
       socket: dir + "/absent.sock",
       allowed: ["sandbox"],
       secure: false,

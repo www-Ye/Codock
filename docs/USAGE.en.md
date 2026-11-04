@@ -14,6 +14,16 @@ For uncertain sends, inspect the terminal before retrying. Dismissing a receipt 
 
 The home page shows CPU, memory and available GPUs. Codex quota uses local metadata when available; missing data is not displayed as zero. Supported phones can vibrate when a new final reply is confirmed in the foreground; background/locked devices are not guaranteed. Settings includes a vibration test.
 
+## Accounts and task assistant
+
+Open the top-right menu → System account → Add a label → Log in, then authorize Codex using the displayed link and code. Credentials stay in `runtime/accounts/` (or the private `accountsRoot` directory); they are never returned to the browser. Each account shows quota, reset time and a countdown. Expired tokens are refreshed once before retrying; failures retain prior data with an unavailable status.
+
+System switching waits for current work and pending delivery to finish, then updates the shared login in `codexHome`. Codex processes using that background server share the change; separate `CODEX_HOME` or remote backends do not. Waiting can be cancelled; conversations and tmux windows are preserved. This requires ChatGPT login and a Codex version supporting `codex app-server daemon`; API-key accounts are not supported by this pool. If the background server is unavailable, run `codex app-server daemon start` as the same Linux user, then refresh.
+
+Open the assistant and ask it to follow a session, such as “Watch build and notify me when the background task finishes.” It discovers progress from allowed sessions and files inside `projectRoot`. Ordinary updates stay quiet; meaningful deliverables or a need for intervention trigger notices. Pause/remove affects monitoring only. Watched sessions use assistant notices instead of vibrating for every reply. Foreground vibration depends on browser/device support; there is no lock-screen push.
+
+The assistant uses the current Codex login and **consumes model quota**. Set `guardianModel` to a model your account supports (default: `gpt-6.1-sol`). It observes progress without executing the original task. A progress file such as `{"state":"running","done":4,"total":10}` helps with numerical tracking; missing progress is never invented.
+
 ## Appearance
 
 <img src="assets/appearance-mobile.png" width="320" alt="Mobile appearance settings: three palettes and four companions">

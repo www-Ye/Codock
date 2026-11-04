@@ -191,6 +191,8 @@ test(
     }
     const desk = await createDesk({
       runtime: dir + "/runtime",
+      codexHome: dir + "/runtime" + "/codex",
+      claudeHome: dir + "/runtime" + "/claude",
       socket,
       allowed: ["cc"],
       secure: false,
@@ -271,6 +273,8 @@ test(
     ];
     const desk = await createDesk({
       runtime: dir + "/runtime",
+      codexHome: dir + "/runtime" + "/codex",
+      claudeHome: dir + "/runtime" + "/claude",
       socket: dir + "/absent",
       allowed: ["cc"],
       secure: false,

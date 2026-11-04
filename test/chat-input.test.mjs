@@ -17,6 +17,78 @@ const entry = () => ({
   text: "中文 hello\n第二行 $(not a command); `literal`",
 });
 
+test("post-paste proof stays within the verified pane, account and Codex process", async () => {
+  for (const change of ["pane", "account", "process"]) {
+    let pasted = false,
+      enters = 0;
+    const registry = {
+      socket: "fixture",
+      target: async () => ({ id: "$1" }),
+      command: async (args) => {
+        if (args[0] === "display-message")
+          return `${pasted && change === "pane" ? "%2" : "%1"}\t123\t30\t0\t${pasted && change === "account" ? "other" : "original"}`;
+        if (args[0] === "capture-pane") return pasted ? "› 测试\n tab to queue message" : "› ";
+        if (args[0] === "paste-buffer") pasted = true;
+        if (args[0] === "send-keys") enters++;
+        return "";
+      },
+    };
+    const input = new ChatInput(
+      {
+        registry,
+        readBound: async () => ({ available: true, binding }),
+        read: async (request) => {
+          assert.equal(request.verifiedThread, binding.split(":")[2]);
+          return { available: false, reason: "changed" };
+        },
+      },
+      { writers: new Map() },
+    );
+    input.buffer = async () => {};
+    assert.equal((await input.send("fixture", { ...entry(), text: "测试" })).state, "unknown");
+    assert.equal(enters, 0, change);
+  }
+});
+
+test("transient post-paste identity failure retries reads only and never replays a submitted draft", async () => {
+  for (const manuallySubmitted of [false, true]) {
+    let reads = 0,
+      pastes = 0,
+      enters = 0,
+      footer = "› Ask Codex to do anything";
+    const registry = {
+      socket: "fixture",
+      target: async () => ({ id: "$1" }),
+      command: async (args) => {
+        if (args[0] === "display-message") return "%1\t123\t30\t0";
+        if (args[0] === "capture-pane") return footer;
+        if (args[0] === "paste-buffer") {
+          pastes++;
+          footer = "› 测试原文";
+        }
+        if (args[0] === "send-keys") enters++;
+        return "";
+      },
+    };
+    const input = new ChatInput(
+      {
+        registry,
+        read: async () => {
+          if (++reads === 3) return { available: true, readOnly: true, binding };
+          if (reads === 4 && manuallySubmitted) footer = "› Ask Codex to do anything";
+          return { available: true, binding };
+        },
+      },
+      { writers: new Map() },
+    );
+    input.buffer = async () => {};
+    const result = await input.send("fixture", { ...entry(), text: "测试原文" });
+    assert.equal(pastes, 1);
+    assert.equal(enters, manuallySubmitted ? 0 : 1);
+    assert.equal(result.state, manuallySubmitted ? "unknown" : "submitted");
+  }
+});
+
 test("direct input blocks wrong thread, copy mode, approvals and competing writers; partial writes never retry", async () => {
   let commands = [],
     writes = 0,
@@ -38,7 +110,12 @@ test("direct input blocks wrong thread, copy mode, approvals and competing write
   };
   const chats = {
     registry,
-    read: async () => {
+    homeFromMeta: (meta) => {
+      assert.equal(meta.split("\t")[0], "%1");
+      return "/isolated-account";
+    },
+    read: async (request) => {
+      assert.equal(request.home, "/isolated-account");
       reads++;
       return { available: valid, binding };
     },
@@ -219,6 +296,8 @@ test(
     let statusProofs = 0;
     const desk = await createDesk({
       runtime: dir + "/runtime",
+      codexHome: dir + "/runtime" + "/codex",
+      claudeHome: dir + "/runtime" + "/claude",
       socket,
       projectRoot: dir,
       allowed: ["sandbox"],
@@ -338,132 +417,144 @@ test(
   "HTTP → native footer verification survives typing and history hints, exactly one Enter",
   { timeout: 20000 },
   async (t) => {
-    for (const history of [false, true])
-      await t.test(history ? "history browsing" : "empty composer", async (t) => {
-        const dir = await mkdtemp(process.env.TMPDIR + "/footer-"),
-          socket = dir + "/t.sock",
-          record = dir + "/received.json";
-        const fixture = fileURLToPath(new URL("./terminal-input.py", import.meta.url));
-        const tmux = (args) =>
-          exec("tmux", ["-S", socket, ...args], {
-            timeout: 5000,
-            env: { ...process.env, TMUX: "" },
-          });
-        await tmux([
-          "-f",
-          "/dev/null",
-          "new-session",
-          "-d",
-          "-s",
-          "sandbox",
-          "-x",
-          "120",
-          "-y",
-          "30",
-          `exec python3 -B '${fixture}' '${record}' --context${history ? " --history" : ""}`,
-        ]);
-        t.after(() => tmux(["kill-server"]).catch(() => {}));
-        for (let n = 0; n < 30; n++) {
-          if ((await tmux(["capture-pane", "-p", "-t", "sandbox"])).stdout.includes("GPT-6.1-Sol"))
-            break;
-          await delay(30);
-        }
-        let native;
-        const desk = await createDesk({
-          runtime: dir + "/runtime",
-          socket,
-          projectRoot: dir,
-          allowed: ["sandbox"],
-          secure: false,
-          chatDependencies: {
-            read: async (input) => ({
-              available: true,
-              readOnly: !input.verifiedThread,
-              binding,
-              revision: "1",
-              messages: [],
-              before: null,
-            }),
-            status: { probe: (...args) => native.probe(...args) },
-          },
-        });
-        native = new CodexStatus(desk.registry, null, {
-          daemon: {
-            snapshot: async () => [
-              {
-                id: binding.split(":")[2],
-                name: "sandbox",
-                cwd: "/workspace",
-                source: "cli",
-                parentThreadId: null,
-              },
-            ],
-          },
-        });
-        const captures = [],
-          keys = [],
-          command = desk.registry.command.bind(desk.registry);
-        desk.registry.command = async (args, ...rest) => {
-          if (args[0] === "send-keys") keys.push(args);
-          const result = await command(args, ...rest);
-          if (args[0] === "capture-pane") captures.push(result);
-          return result;
-        };
-        await new Promise((r) => desk.server.listen(0, "127.0.0.1", r));
-        t.after(() => desk.close());
-        const origin = "http://127.0.0.1:" + desk.server.address().port;
-        desk.config.origin = origin;
-        const cookie = desk.auth
-          .cookie(desk.auth.issue({ login: "isolated-fixture" }))
-          .split(";")[0];
-        const identity = (await desk.registry.list())[0].identity;
-        const message = {
-          ...entry(),
-          identity,
-          requestId: randomUUID(),
-          confirm: true,
-          transport: "terminal-enter",
-        };
-        const post = () =>
-          fetch(origin + "/api/sessions/sandbox/chat", {
-            method: "POST",
-            headers: { Origin: origin, Cookie: cookie, "Content-Type": "application/json" },
-            body: JSON.stringify(message),
-          }).then((r) => r.json());
-        const result = await post();
-        assert.equal(result.state, "submitted", JSON.stringify(result));
-        let records;
-        for (let n = 0; n < 30; n++) {
-          try {
-            records = JSON.parse(await readFile(record, "utf8"));
-            break;
-          } catch {
+    for (const history of [false, true, "hidden"])
+      await t.test(
+        history === "hidden"
+          ? "typing hides identity"
+          : history
+            ? "history browsing"
+            : "empty composer",
+        async (t) => {
+          const dir = await mkdtemp(process.env.TMPDIR + "/footer-"),
+            socket = dir + "/t.sock",
+            record = dir + "/received.json";
+          const fixture = fileURLToPath(new URL("./terminal-input.py", import.meta.url));
+          const tmux = (args) =>
+            exec("tmux", ["-S", socket, ...args], {
+              timeout: 5000,
+              env: { ...process.env, TMUX: "" },
+            });
+          await tmux([
+            "-f",
+            "/dev/null",
+            "new-session",
+            "-d",
+            "-s",
+            "sandbox",
+            "-x",
+            "120",
+            "-y",
+            "30",
+            `exec python3 -B '${fixture}' '${record}' --context${history === "hidden" ? " --hidden-footer" : history ? " --history" : ""}`,
+          ]);
+          t.after(() => tmux(["kill-server"]).catch(() => {}));
+          for (let n = 0; n < 30; n++) {
+            if (
+              (await tmux(["capture-pane", "-p", "-t", "sandbox"])).stdout.includes("GPT-6.1-Sol")
+            )
+              break;
             await delay(30);
           }
-        }
-        assert.deepEqual(records, [{ text: message.text, submitted: true }]);
-        assert(
-          captures.some(
-            (screen) =>
-              screen.includes(message.text.split("\n")[1]) &&
-              screen.includes("GPT-6.1-Sol") &&
-              !screen.includes("? for shortcuts"),
-          ),
-          "verify the actual pasted composer without shortcuts",
-        );
-        assert.deepEqual(
-          keys.map((args) => args.slice(3)),
-          [["Enter"]],
-          "no /status, no extra Enter",
-        );
-        assert.equal((await post()).state, "submitted");
-        await delay(50);
-        assert.equal(
-          JSON.parse(await readFile(record, "utf8")).length,
-          1,
-          "repeating HTTP request does not repeat input",
-        );
-        assert.equal(keys.length, 1);
-      });
+          let native;
+          const desk = await createDesk({
+            runtime: dir + "/runtime",
+            codexHome: dir + "/runtime" + "/codex",
+            claudeHome: dir + "/runtime" + "/claude",
+            socket,
+            projectRoot: dir,
+            allowed: ["sandbox"],
+            secure: false,
+            chatDependencies: {
+              read: async (input) => ({
+                available: true,
+                readOnly: !input.verifiedThread,
+                binding,
+                revision: "1",
+                messages: [],
+                before: null,
+              }),
+              status: { probe: (...args) => native.probe(...args) },
+            },
+          });
+          native = new CodexStatus(desk.registry, null, {
+            home: desk.config.codexHome,
+            daemon: {
+              snapshot: async () => [
+                {
+                  id: binding.split(":")[2],
+                  name: "sandbox",
+                  cwd: "/workspace",
+                  source: "cli",
+                  parentThreadId: null,
+                },
+              ],
+            },
+          });
+          const captures = [],
+            keys = [],
+            command = desk.registry.command.bind(desk.registry);
+          desk.registry.command = async (args, ...rest) => {
+            if (args[0] === "send-keys") keys.push(args);
+            const result = await command(args, ...rest);
+            if (args[0] === "capture-pane") captures.push(result);
+            return result;
+          };
+          await new Promise((r) => desk.server.listen(0, "127.0.0.1", r));
+          t.after(() => desk.close());
+          const origin = "http://127.0.0.1:" + desk.server.address().port;
+          desk.config.origin = origin;
+          const cookie = desk.auth
+            .cookie(desk.auth.issue({ login: "isolated-fixture" }))
+            .split(";")[0];
+          const identity = (await desk.registry.list())[0].identity;
+          const message = {
+            ...entry(),
+            identity,
+            requestId: randomUUID(),
+            confirm: true,
+            transport: "terminal-enter",
+          };
+          const post = () =>
+            fetch(origin + "/api/sessions/sandbox/chat", {
+              method: "POST",
+              headers: { Origin: origin, Cookie: cookie, "Content-Type": "application/json" },
+              body: JSON.stringify(message),
+            }).then((r) => r.json());
+          const result = await post();
+          assert.equal(result.state, "submitted", JSON.stringify(result));
+          let records;
+          for (let n = 0; n < 30; n++) {
+            try {
+              records = JSON.parse(await readFile(record, "utf8"));
+              break;
+            } catch {
+              await delay(30);
+            }
+          }
+          assert.deepEqual(records, [{ text: message.text, submitted: true }]);
+          assert(
+            captures.some(
+              (screen) =>
+                screen.includes(message.text.split("\n")[1]) &&
+                screen.includes(history === "hidden" ? "tab to queue message" : "GPT-6.1-Sol") &&
+                !screen.includes("? for shortcuts"),
+            ),
+            "verify the actual pasted composer without shortcuts",
+          );
+          assert.deepEqual(
+            keys.map((args) => args.slice(3)),
+            [["Enter"]],
+            "no /status, no extra Enter",
+          );
+          assert.equal((await post()).state, "submitted");
+          await delay(50);
+          assert.equal(
+            JSON.parse(await readFile(record, "utf8")).length,
+            1,
+            "repeating HTTP request does not repeat input",
+          );
+          assert.equal(keys.length, 1);
+        },
+      );
   },
 );

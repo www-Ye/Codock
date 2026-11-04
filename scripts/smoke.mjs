@@ -42,6 +42,8 @@ await writeFile(
     port,
     authMode: "local",
     chatEnabled: false,
+    codexHome: base + "/codex",
+    claudeHome: base + "/claude",
   }),
   { mode: 0o600 },
 );

@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import { CodexStatus, focusedThread } from "../lib/codex-status.mjs";
 import { Chats } from "../lib/chat.mjs";
 import { ChatSender } from "../lib/chat-send.mjs";
+import { ChatInput } from "../lib/chat-input.mjs";
+import { observeTerminal } from "../lib/terminal-status.mjs";
 
 const thread = "11111111-1111-1111-1111-111111111111";
 const metadata = {
@@ -16,6 +18,34 @@ const metadata = {
 };
 const footer = (name = "work", draft = "") =>
   `› ${draft || "Ask Codex to do anything"}\n\n  GPT-6.1-Sol xhigh · /workspace · ${name}\n  ← for agents · ? for shortcuts`;
+
+test("chat reads the account from its pane snapshot and rejects an account change mid-read", async () => {
+  let account = "a_first",
+    change = false,
+    reads = 0;
+  const registry = {
+    target: async () => ({ id: "$1" }),
+    command: async (args) => (args[0] === "display-message" ? `%1\t123\t30\t0\t${account}` : "› "),
+  };
+  const chats = new Chats(registry, {
+    read: async (input) => {
+      reads++;
+      assert.equal(input.home, "/accounts/a_first");
+      if (change) account = "a_second";
+      return { available: true, binding: "123:456:" + thread, messages: [] };
+    },
+  });
+  chats.homeFromMeta = (meta) => "/accounts/" + meta.split("\t")[4];
+  assert.equal(
+    (await chats.page("work", new URLSearchParams({ identity: "stable" }))).available,
+    true,
+  );
+  assert.equal(reads, 1);
+  change = true;
+  await assert.rejects(chats.page("work", new URLSearchParams({ identity: "stable" })), {
+    status: 409,
+  });
+});
 function fixture({ draft = "", mode = "0", threads = [metadata], switchTo = null } = {}) {
   let captures = 0;
   const calls = [];
@@ -74,7 +104,57 @@ test("footer match is exact and never selects a status card, substring, child ag
   const rows = [metadata];
   assert.equal(focusedThread(footer(), rows), thread);
   assert.equal(focusedThread(footer() + "\n", rows), thread);
+  assert.equal(
+    focusedThread(footer() + "\n   \n".repeat(40), rows),
+    thread,
+    "blank terminal padding must not hide the footer",
+  );
+  assert.equal(
+    focusedThread(footer() + "\n› another input\n" + "\n".repeat(40), rows),
+    null,
+    "padding removal cannot select an identity above a newer composer",
+  );
   assert.equal(focusedThread(footer("work · Main [default]"), rows), thread);
+  for (const name of [
+    "work · ← for agents",
+    "work · ← for agents · ? for shortcuts",
+    "work · Main [default] · ← for agents",
+  ])
+    assert.equal(
+      focusedThread(footer(name), rows),
+      thread,
+      "compact footer navigation must not lock chat input",
+    );
+  for (const name of [
+    "work · Main [default] · ← for… Goal hit usage limits (/goal resume)",
+    "work · Main [default] · ← for…",
+    "work · ← for agents · ? for short… Goal paused (/goal resume)",
+  ])
+    assert.equal(
+      focusedThread(footer(name), rows),
+      thread,
+      "elided navigation and adjacent goal badges do not change the foreground thread",
+    );
+  for (const name of [
+    "work… · Main [default] · ← for…",
+    "work · Worker · ← for… Goal hit usage limits (/goal resume)",
+    "work · Main [def… · ← for…",
+    "work · Unknown… Goal paused (/goal resume)",
+  ])
+    assert.equal(
+      focusedThread(footer(name), rows),
+      null,
+      "only known navigation may be elided; identity and role remain exact",
+    );
+  assert.equal(focusedThread(footer("work · Worker · ← for agents"), rows), null);
+  assert.equal(
+    focusedThread(
+      footer("work · Main [default]").replace("GPT-6.1-Sol xhigh", "GPT-6-Astra xhigh fast"),
+      rows,
+    ),
+    thread,
+    "fast service tier must not make a verified foreground thread readonly",
+  );
   assert.equal(
     focusedThread(
       footer("work").replace("work\n", "work       Goal paused (/goal resume)\n"),
@@ -126,6 +206,46 @@ test("footer match is exact and never selects a status card, substring, child ag
     ]),
     null,
   );
+});
+
+test("resized pane padding does not lock identity, runtime state or the input target", async () => {
+  const screen = ("earlier output\n".repeat(15) + footer() + "\n".repeat(60)).split("\n");
+  const meta = `%1\t123\t${screen.length}\t0`,
+    binding = `456:789:${thread}`,
+    calls = [];
+  const registry = {
+    socket: "isolated",
+    target: async () => ({ id: "$1" }),
+    command: async (args) => {
+      calls.push(args);
+      if (args[0] === "display-message") return meta;
+      if (args[0] === "capture-pane")
+        return screen
+          .slice(Number(args[args.indexOf("-S") + 1]), Number(args[args.indexOf("-E") + 1]) + 1)
+          .join("\n");
+      throw Error("This check must not type into the terminal");
+    },
+  };
+  const writers = new Map(),
+    status = new CodexStatus(registry, writers, { daemon: { snapshot: async () => [metadata] } });
+  const read = async (input) => ({
+    available: true,
+    binding,
+    readOnly: !input.verifiedThread,
+    messages: [],
+  });
+  const chats = new Chats(registry, { read, status });
+  assert.equal(
+    (await chats.page("work", new URLSearchParams({ identity: "identity" }))).readOnly,
+    false,
+  );
+  assert.equal((await observeTerminal(registry, meta)).state, "ready");
+  const target = await new ChatInput(chats, { writers }).target("work", {
+    identity: "identity",
+    binding,
+  });
+  assert.equal(target.pane, "%1");
+  assert(calls.every((args) => ["display-message", "capture-pane"].includes(args[0])));
 });
 
 test("daemon errors leave saved history readonly and cannot inject a fallback command", async () => {

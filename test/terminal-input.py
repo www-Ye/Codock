@@ -21,8 +21,8 @@ def render():
         if '--history' in sys.argv else '? for shortcuts')
     screen = ('• Working (1s • esc to interrupt)\r\n\r\n› '
               + text.replace('\n', '\r\n')
-              + '\r\n\r\n GPT-6.1-Sol high · /workspace · sandbox\r\n '
-              + hint + '\r\n')
+              + ('\r\n\r\n tab to queue message               6% context left\r\n' if draft and '--hidden-footer' in sys.argv else
+                 '\r\n\r\n GPT-6.1-Sol high · /workspace · sandbox\r\n ' + hint + '\r\n'))
     os.write(1, b'\x1b[2J\x1b[23;1H' + screen.encode())
 
 

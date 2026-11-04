@@ -232,6 +232,8 @@ test(
           : json({ id: allowed ? githubOwner.id : 123, login: "example-owner", type: "User" });
     const desk = await createDesk({
       runtime: dir + "/runtime",
+      codexHome: dir + "/runtime" + "/codex",
+      claudeHome: dir + "/runtime" + "/claude",
       socket: dir + "/absent.sock",
       allowed: [],
       secure: false,

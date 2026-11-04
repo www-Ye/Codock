@@ -187,6 +187,8 @@ test(
     await symlink(dir + "/project/secret.txt", dir + "/project/site/leak.txt");
     const desk = await createDesk({
       runtime: dir + "/runtime",
+      codexHome: dir + "/runtime" + "/codex",
+      claudeHome: dir + "/runtime" + "/claude",
       socket,
       projectRoot: dir + "/project",
       allowed: ["sandbox"],

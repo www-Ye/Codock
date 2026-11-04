@@ -14,14 +14,18 @@
     <meta name="theme-color" content="#191f1c" />
     <title>{{BRAND_NAME}}</title>
     <link rel="stylesheet" href="/vendor/xterm.css" />
-    <link rel="stylesheet" href="/style.css?v=compact1" />
-    <link rel="stylesheet" href="/brand.css" />
-    <script src="/theme.js" defer></script>
-    <script src="/preview-view.js?v=media1" defer></script>
+    <link rel="stylesheet" href="/style.css?v=accounts1" />
+    <link rel="stylesheet" href="/accounts.css?v=accounts1" />
+    <script src="/preview-view.js?v=feedbackvoice1" defer></script>
     <script src="/chat-markdown.js?v=receipt1" defer></script>
     <script src="/chat-view.js?v=receipt1" defer></script>
     <script src="/session-list.js?v=receipt1" defer></script>
-    <script src="/app.js?v=compact1" defer></script>
+    <script src="/accounts.js?v=accounts1" defer></script>
+    <link rel="stylesheet" href="/guardian.css?v=compact2" />
+    <script src="/guardian.js?v=compact2" defer></script>
+    <link rel="stylesheet" href="/brand.css" />
+    <script src="/theme.js" defer></script>
+    <script src="/app.js?v=guardian1" defer></script>
   </head>
   <body>
     <section id="login" class="login">
@@ -80,14 +84,15 @@
           </div>
           <nav class="tabs" aria-label="工作页">
             <button data-tab="chat" class="selected">聊天</button
-            ><button data-tab="preview">预览</button><button data-tab="terminal">终端</button
-            ><button data-tab="settings">设置</button>
+            ><button data-tab="preview">预览</button><button data-tab="terminal">终端</button>
           </nav>
         </div>
         <details id="deskMenu" class="header-actions">
           <summary aria-label="工作台菜单">⋯</summary>
           <div class="desk-menu-items">
-            <a href="/">全部会话</a><a href="/#system">机器状态</a
+            <button id="sessionSettings" data-tab="settings" class="quiet">会话设置</button
+            ><button id="quotaShortcut" class="quiet">账号额度</button><a href="/">全部会话</a
+            ><a href="/#system">机器状态</a
             ><button id="refresh" class="quiet" aria-label="刷新会话">刷新会话</button
             ><button id="logout" class="quiet">退出登录</button>
           </div>
@@ -357,10 +362,18 @@
             <div class="preview-top">
               <span id="previewInfo">项目预览</span>
               <div>
-                <button id="reloadPreview">刷新预览</button
+                <button id="previewVoice" type="button" hidden aria-pressed="false">语音输入</button
+                ><button id="reloadPreview">刷新预览</button
                 ><button id="openPreview">新窗口打开 ↗</button>
               </div>
             </div>
+            <p
+              id="previewVoiceStatus"
+              class="preview-status"
+              hidden
+              role="status"
+              aria-live="polite"
+            ></p>
             <p
               id="previewStatus"
               class="preview-status hidden"
