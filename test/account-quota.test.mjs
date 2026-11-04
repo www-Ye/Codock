@@ -197,7 +197,7 @@ test(
       executablePath: process.env.CHROME_BIN || chromium.executablePath(),
       headless: true,
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      env: { ...process.env, TMPDIR: dir },
+      env: { ...process.env },
       viewport: { width: 390, height: 844 },
     });
     t.after(() => browser.close());

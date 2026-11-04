@@ -122,7 +122,7 @@ test(
       hasTouch: true,
       viewport: { width: 390, height: 844 },
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      env: { ...process.env, TMPDIR: dir },
+      env: { ...process.env },
     });
     t.after(() => browser.close());
     await browser.addCookies([

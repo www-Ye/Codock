@@ -107,7 +107,7 @@ test(
       headless: true,
       viewport: { width: 320, height: 640 },
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      env: { ...process.env, TMPDIR: dir },
+      env: { ...process.env },
     });
     t.after(() => browser.close());
     const cookie = desk.auth
