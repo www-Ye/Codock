@@ -841,7 +841,7 @@ async function route() {
   quotaRows.replaceChildren();
   void accountDesk.refreshSession();
   void refreshQuota(true);
-  sessionView.update(sessions, current);
+  sessionView.update(sessions, current, { preserveOrder: true });
   sessionView.navigated();
   document.body.classList.remove("terminal-mode", "chat-mode", "workspace-mode");
   $("#home").classList.toggle("hidden", Boolean(current));

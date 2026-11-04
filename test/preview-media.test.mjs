@@ -103,7 +103,7 @@ test(
       }
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}iframe{width:100%;height:calc(100dvh - 65px);border:0}.hidden{display:none}button{min-height:44px}</style>
-      <section id="previewPanel"><button id="reloadPreview">刷新预览</button><span id="previewInfo"></span><p id="previewStatus"></p><div id="previewEmpty"></div><iframe id="previewFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"></iframe></section>
+      <section id="previewPanel"><button id="previewVoice" hidden></button><p id="previewVoiceStatus" hidden></p><button id="reloadPreview">刷新预览</button><span id="previewInfo"></span><p id="previewStatus"></p><div id="previewEmpty"></div><iframe id="previewFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"></iframe></section>
       <script>${view}</script><script>const item={name:'sandbox',revision:1,preview:{type:'static',entry:'index.html'}};const previewView=new DeskPreview({request:async()=>({url:${JSON.stringify(previewOrigin + "/index.html")}}),notify:()=>{}});document.querySelector('#reloadPreview').onclick=()=>previewView.open(item,{force:true});previewView.open(item);</script>`);
     });
     await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -167,8 +167,19 @@ test(
       await page.setViewportSize(size);
       await frame().locator("#draft").fill("keep my draft");
       await frame().locator("#image").scrollIntoViewIfNeeded();
-      const before = await page.frames()[1].evaluate(() => scrollY);
+      // Touch automation may scroll the iframe again before dispatching its
+      // click. Compare with the position when the viewer actually opens.
+      await page.frames()[1].evaluate(() => {
+        window.addEventListener(
+          "click",
+          () => {
+            window.mediaClickScroll = scrollY;
+          },
+          { once: true, capture: true },
+        );
+      });
       await frame().locator("#image").tap();
+      const before = await page.frames()[1].evaluate(() => window.mediaClickScroll);
       const button = frame().getByRole("button", { name: "关闭预览" });
       await button.waitFor();
       const box = await button.boundingBox();

@@ -80,8 +80,14 @@ class DeskSessions {
     }
     if (open) this.onOpen?.();
   }
-  update(items, current) {
-    this.items = [...items].sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0));
+  update(items, current, { preserveOrder = false } = {}) {
+    const order = new Map(this.items.map((item, index) => [item.name, index]));
+    this.items = [...items].sort(
+      (a, b) =>
+        (preserveOrder
+          ? (order.get(a.name) ?? order.size) - (order.get(b.name) ?? order.size)
+          : 0) || (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0),
+    );
     this.current = current?.name;
     for (const item of items) if (item.state !== "online") this.runtime.delete(item.name);
     this.render();
